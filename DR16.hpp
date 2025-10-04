@@ -7,13 +7,15 @@ module_description: Receiver parsing
 constructor_args:
   - cmd: '@CMD'
   - task_stack_depth_uart: 2048
+  - cmd_data_tp_name: "cmd_raw_data_"
 required_hardware: dr16 dma uart
 === END MANIFEST === */
 // clang-format on
 
+#include "CMD.hpp"
 #include "app_framework.hpp"
 #include "uart.hpp"
-#include "CMD.hpp"
+
 
 /**
  * @brief DR16遥控器通道值范围定义
@@ -28,7 +30,7 @@ required_hardware: dr16 dma uart
  * @details 负责接收和解析DR16遥控器的数据，包括摇杆���拨杆和按键等信息
  */
 class DR16 : public LibXR::Application {
-public:
+ public:
   /**
    * @brief 控制源枚举
    */
@@ -124,25 +126,22 @@ public:
     uint16_t res;
   } Data;
 
-
   /**
    * @brief DR16构造函数
    * @param hw 硬件容器引用
    * @param app 应用管理器引用
    * @param cmd 控制命令对象引用
    * @param task_stack_depth_uart UART任务栈深度
+   * @param cmd_data_tp_name CMD数据主题名称
    */
   DR16(LibXR::HardwareContainer& hw, LibXR::ApplicationManager& app, CMD& cmd,
-       uint32_t task_stack_depth_uart)
-    : cmd_(&cmd), uart_(hw.Find<LibXR::UART>("uart_dr16")), sem(0), op(sem) {
+       uint32_t task_stack_depth_uart, const char* cmd_data_tp_name)
+      : cmd_(&cmd),
+        uart_(hw.Find<LibXR::UART>("uart_dr16")),
+        sem(0),
+        op(sem),
+        cmd_data_tp_(cmd_data_tp_name, sizeof(CMD::Data)) {
     uart_->SetConfig({100000, LibXR::UART::Parity::EVEN, 8, 1});
-
-    /* CMD数据主题 */
-    cmd_data_tp_ = LibXR::Topic::CreateTopic<CMD::Data>("dr16_cmd_data");
-
-    /* 原始DR16数据主题 */
-    dr16_data_tp_ = LibXR::Topic::CreateTopic<Data>(
-        "dr16_raw_data", nullptr, true);
 
     /* 注册CMD到正确的主题 */
     cmd_->RegisterController<CMD::Data>(cmd_data_tp_);
@@ -156,8 +155,7 @@ public:
   /**
    * @brief 监控函数重写
    */
-  void OnMonitor() override {
-  }
+  void OnMonitor() override {}
 
   /**
    * @brief DR16 UART读取线程函数
@@ -229,15 +227,13 @@ public:
 
     /* 检测拨杆开关状态变化 */
     if (this->data_.sw_l != this->last_data_.sw_l) {
-      this->event_.Active(
-          static_cast<uint32_t>(SwitchPos::DR16_SW_L_POS_TOP) + this->data_.sw_l
-          - 1);
+      this->event_.Active(static_cast<uint32_t>(SwitchPos::DR16_SW_L_POS_TOP) +
+                          this->data_.sw_l - 1);
     }
 
     if (this->data_.sw_r != this->last_data_.sw_r) {
-      this->event_.Active(
-          static_cast<uint32_t>(SwitchPos::DR16_SW_R_POS_TOP) + this->data_.sw_r
-          - 1);
+      this->event_.Active(static_cast<uint32_t>(SwitchPos::DR16_SW_R_POS_TOP) +
+                          this->data_.sw_r - 1);
     }
 
     uint32_t tmp = 0;
@@ -261,20 +257,18 @@ public:
     }
 
     /* 控制模式切换 */
-    if (((this->data_.key &
-          (RawValue(Key::KEY_SHIFT) | RawValue(Key::KEY_CTRL) | RawValue(
-               Key::KEY_Q))) ==
-         (RawValue(Key::KEY_SHIFT) | RawValue(Key::KEY_CTRL) | RawValue(
-              Key::KEY_Q)))) {
+    if (((this->data_.key & (RawValue(Key::KEY_SHIFT) |
+                             RawValue(Key::KEY_CTRL) | RawValue(Key::KEY_Q))) ==
+         (RawValue(Key::KEY_SHIFT) | RawValue(Key::KEY_CTRL) |
+          RawValue(Key::KEY_Q)))) {
       this->ctrl_source_ = ControlSource::DR16_CTRL_SOURCE_SW;
     }
 
     /* 切换到键鼠控制模式 */
-    if (((this->data_.key &
-          (RawValue(Key::KEY_SHIFT) | RawValue(Key::KEY_CTRL) | RawValue(
-               Key::KEY_E))) ==
-         (RawValue(Key::KEY_SHIFT) | RawValue(Key::KEY_CTRL) | RawValue(
-              Key::KEY_E)))) {
+    if (((this->data_.key & (RawValue(Key::KEY_SHIFT) |
+                             RawValue(Key::KEY_CTRL) | RawValue(Key::KEY_E))) ==
+         (RawValue(Key::KEY_SHIFT) | RawValue(Key::KEY_CTRL) |
+          RawValue(Key::KEY_E)))) {
       this->ctrl_source_ = ControlSource::DR16_CTRL_SOURCE_MOUSE;
     }
 
@@ -320,10 +314,10 @@ public:
       cmd_data.chassis.z = 0.0f;
 
       /* 云台控制 - 鼠标模式 */
-      cmd_data.gimbal.pit = -static_cast<float>(this->data_.y) / 32768.0f *
-                            1000.0f;
-      cmd_data.gimbal.yaw = -static_cast<float>(this->data_.x) / 32768.0f *
-                            1000.0f;
+      cmd_data.gimbal.pit =
+          -static_cast<float>(this->data_.y) / 32768.0f * 1000.0f;
+      cmd_data.gimbal.yaw =
+          -static_cast<float>(this->data_.x) / 32768.0f * 1000.0f;
     }
     /* 遥控器控制模式 */
     else if (this->ctrl_source_ == ControlSource::DR16_CTRL_SOURCE_SW) {
@@ -364,15 +358,15 @@ public:
     uint16_t ch_r_y; /* 右摇杆Y轴 */
     uint16_t ch_l_x; /* 左摇杆X轴 */
     uint16_t ch_l_y; /* 左摇杆Y轴 */
-    uint8_t sw_r; /* 右拨杆 */
-    uint8_t sw_l; /* 左拨杆 */
-    int16_t x; /* 鼠标X轴移动 */
-    int16_t y; /* 鼠标Y轴移动 */
-    int16_t z; /* 鼠标Z轴移动 */
+    uint8_t sw_r;    /* 右拨杆 */
+    uint8_t sw_l;    /* 左拨杆 */
+    int16_t x;       /* 鼠标X轴移动 */
+    int16_t y;       /* 鼠标Y轴移动 */
+    int16_t z;       /* 鼠标Z轴移动 */
     uint8_t press_l; /* 鼠标左键状态 */
     uint8_t press_r; /* 鼠标右键状态 */
-    uint16_t key; /* 键盘按键状态 */
-    uint16_t res; /* 保留字段 */
+    uint16_t key;    /* 键盘按键状态 */
+    uint16_t res;    /* 保留字段 */
   };
 
   /**
@@ -397,24 +391,25 @@ public:
   }
 #endif
 
-private:
+ private:
   CMD* cmd_; /* CMD模块指针 */
-  ControlSource ctrl_source_ = ControlSource::DR16_CTRL_SOURCE_SW; /* 当前控制源 */
+  ControlSource ctrl_source_ =
+      ControlSource::DR16_CTRL_SOURCE_SW; /* 当前控制源 */
 
-  Data data_; /* 当前数据 */
-  Data last_data_{}; /* 上一帧数据 */
+  Data data_;           /* 当前数据 */
+  Data last_data_{};    /* 上一帧数据 */
   CMD::Data cmd_data{}; /* 命令数据 */
 
 #ifdef LIBXR_DEBUG_BUILD
   DataView data_view_; /* 调试用数据视图 */
 #endif
 
-  LibXR::UART* uart_; /* UART接口指针 */
-  LibXR::Event event_; /* 事件处理器 */
+  LibXR::UART* uart_;         /* UART接口指针 */
+  LibXR::Event event_;        /* 事件处理器 */
   LibXR::Thread thread_uart_; /* UART线程 */
-  LibXR::Semaphore sem; /* 信号量 */
-  LibXR::ReadOperation op; /* 读操作 */
-  LibXR::Topic cmd_tp_; /* 命令主题 */
-  LibXR::Topic cmd_data_tp_; /* 命令数据主题 */
+  LibXR::Semaphore sem;       /* 信号量 */
+  LibXR::ReadOperation op;    /* 读操作 */
+  LibXR::Topic cmd_tp_;       /* 命令主题 */
+  LibXR::Topic cmd_data_tp_;  /* 命令数据主题 */
   LibXR::Topic dr16_data_tp_; /* DR16原始数据主题 */
 };
