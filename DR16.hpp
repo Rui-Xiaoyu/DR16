@@ -5,7 +5,7 @@
 module_name: DR16
 module_description: Receiver parsing
 constructor_args:
-  - cmd: '@CMD'
+  - CMD: '@cmd'
   - task_stack_depth_uart: 2048
   - cmd_data_tp_name: "cmd_raw_data_"
 required_hardware: dr16 dma uart
