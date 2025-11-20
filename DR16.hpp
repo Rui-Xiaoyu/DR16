@@ -17,7 +17,6 @@ required_hardware: dr16 dma uart
 #include "libxr_def.hpp"
 #include "uart.hpp"
 
-
 /**
  * @brief DR16遥控器通道值范围定义
  */
@@ -238,13 +237,15 @@ class DR16 : public LibXR::Application {
 
     /* 检测拨杆开关状态变化 */
     if (this->data_.sw_l != this->last_data_.sw_l) {
-      this->dr16_event_.Active(static_cast<uint32_t>(SwitchPos::DR16_SW_L_POS_TOP) +
-                          this->data_.sw_l - 1);
+      this->dr16_event_.Active(
+          static_cast<uint32_t>(SwitchPos::DR16_SW_L_POS_TOP) +
+          this->data_.sw_l - 1);
     }
 
     if (this->data_.sw_r != this->last_data_.sw_r) {
-      this->dr16_event_.Active(static_cast<uint32_t>(SwitchPos::DR16_SW_R_POS_TOP) +
-                          this->data_.sw_r - 1);
+      this->dr16_event_.Active(
+          static_cast<uint32_t>(SwitchPos::DR16_SW_R_POS_TOP) +
+          this->data_.sw_r - 1);
     }
 
     uint32_t tmp = 0;
@@ -350,6 +351,14 @@ class DR16 : public LibXR::Application {
       cmd_data_.gimbal.pit =
           2 * (static_cast<float>(this->data_.ch_r_y) - DR16_CH_VALUE_MID) /
           FULL_RANGE;
+
+      /* 发射控制 */
+      if (this->data_.res == DR16_CH_VALUE_MID) {
+        cmd_data_.launcher.isfire = false;
+      }
+      if (this->data_.res == DR16_CH_VALUE_MAX) {
+        cmd_data_.launcher.isfire = true;
+      }
     }
 
     cmd_data_.online = true;
@@ -407,8 +416,8 @@ class DR16 : public LibXR::Application {
   ControlSource ctrl_source_ =
       ControlSource::DR16_CTRL_SOURCE_SW; /* 当前控制源 */
 
-  Data data_;           /* 当前数据 */
-  Data last_data_{};    /* 上一帧数据 */
+  Data data_;            /* 当前数据 */
+  Data last_data_{};     /* 上一帧数据 */
   CMD::Data cmd_data_{}; /* 命令数据 */
 
 #ifdef LIBXR_DEBUG_BUILD
@@ -416,10 +425,10 @@ class DR16 : public LibXR::Application {
 #endif
 
   LibXR::UART* uart_;         /* UART接口指针 */
-  LibXR::Event dr16_event_;        /* 事件处理器 */
+  LibXR::Event dr16_event_;   /* 事件处理器 */
   LibXR::Thread thread_uart_; /* UART线程 */
-  LibXR::Semaphore sem_;       /* 信号量 */
-  LibXR::ReadOperation op_;    /* 读操作 */
+  LibXR::Semaphore sem_;      /* 信号量 */
+  LibXR::ReadOperation op_;   /* 读操作 */
   LibXR::Topic cmd_tp_;       /* 命令主题 */
   LibXR::Topic cmd_data_tp_;  /* 命令数据主题 */
   LibXR::Topic dr16_data_tp_; /* DR16原始数据主题 */
