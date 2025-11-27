@@ -173,9 +173,14 @@ class DR16 : public LibXR::Application {
    */
   static void ThreadDr16(DR16* dr16) {
     dr16->uart_->read_port_->Reset();
+    dr16->sem_.Post();
 
     while (true) {
       dr16->uart_->Read(dr16->data_, dr16->op_);
+      if(dr16->sem_.Wait(20) != LibXR::ErrorCode::OK){
+        dr16->Offline();
+        continue;
+      }
       if (dr16->DataCorrupted()) {
         dr16->uart_->read_port_->Reset();
         LibXR::Thread::Sleep(3);
@@ -184,6 +189,7 @@ class DR16 : public LibXR::Application {
         dr16->DataviewToData(dr16->data_view_, dr16->data_);
 #endif
         dr16->PraseRC();
+        dr16->sem_.Post();
       }
     }
   }
