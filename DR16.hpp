@@ -353,20 +353,36 @@ class DR16 : public LibXR::Application {
           FULL_RANGE;
 
       /* 发射控制 */
-      if (this->data_.res == DR16_CH_VALUE_MID) {
-        cmd_data_.launcher.isfire = false;
-      }
-      if (this->data_.res == DR16_CH_VALUE_MAX) {
+      if (this->data_.res == DR16_CH_VALUE_MIN) {
         cmd_data_.launcher.isfire = true;
+      }else{
+        cmd_data_.launcher.isfire = false;
       }
     }
 
-    cmd_data_.online = true;
+    cmd_data_.chassis_online = true;
+    cmd_data_.gimbal_online = true;
     cmd_data_.ctrl_source = CMD::ControlSource::CTRL_SOURCE_RC;
 
     this->cmd_data_tp_.Publish(cmd_data_);
 
     memcpy(&(this->last_data_), &(this->data_), sizeof(Data));
+  }
+
+  void Offline() {
+    cmd_data_.chassis.x = 0;
+    cmd_data_.chassis.y = 0;
+    cmd_data_.chassis.z = 0;
+
+    cmd_data_.gimbal.yaw = 0;
+    cmd_data_.gimbal.pit = 0;
+
+    cmd_data_.launcher.isfire = false;
+
+    cmd_data_.chassis_online = false;
+    cmd_data_.gimbal_online = false;
+
+    this->cmd_data_tp_.Publish(cmd_data_);
   }
 
 #ifdef LIBXR_DEBUG_BUILD
