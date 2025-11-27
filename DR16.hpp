@@ -173,9 +173,21 @@ class DR16 : public LibXR::Application {
    */
   static void ThreadDr16(DR16* dr16) {
     dr16->uart_->read_port_->Reset();
+    dr16->sem_.Post();
 
     while (true) {
+      if (dr16->uart_->read_port_->Size() != sizeof(Data) &&
+          dr16->uart_->read_port_->Size() != 0) {
+        dr16->uart_->read_port_->Reset();
+        LibXR::Thread::Sleep(3);
+        continue;
+      }
       dr16->uart_->Read(dr16->data_, dr16->op_);
+      if (dr16->sem_.Wait(20) != LibXR::ErrorCode::OK) {
+        dr16->Offline();
+        LibXR::Thread::Sleep(3);
+        continue;
+      }
       if (dr16->DataCorrupted()) {
         dr16->uart_->read_port_->Reset();
         LibXR::Thread::Sleep(3);
@@ -184,6 +196,7 @@ class DR16 : public LibXR::Application {
         dr16->DataviewToData(dr16->data_view_, dr16->data_);
 #endif
         dr16->PraseRC();
+        dr16->sem_.Post();
       }
     }
   }
@@ -355,7 +368,7 @@ class DR16 : public LibXR::Application {
       /* 发射控制 */
       if (this->data_.res == DR16_CH_VALUE_MIN) {
         cmd_data_.launcher.isfire = true;
-      }else{
+      } else {
         cmd_data_.launcher.isfire = false;
       }
     }
