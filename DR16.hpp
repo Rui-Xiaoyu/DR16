@@ -144,11 +144,8 @@ class DR16 : public LibXR::Application {
         uart_(hw.Find<LibXR::UART>("uart_dr16")),
         sem_(0),
         op_(sem_),
-        cmd_data_tp_(cmd_data_tp_name, sizeof(CMD::Data)) {
+        cmd_data_tp_(cmd_data_tp_name, sizeof(CMD::Data), nullptr, true) {
     uart_->SetConfig({100000, LibXR::UART::Parity::EVEN, 8, 1});
-
-    /* 注册CMD到正确的主题 */
-    cmd_->RegisterController<CMD::Data>(cmd_data_tp_);
 
     /* 创建UART线程 */
     thread_uart_.Create(this, ThreadDr16, "uart_dr16", task_stack_depth_uart,
@@ -376,7 +373,7 @@ class DR16 : public LibXR::Application {
     cmd_data_.gimbal_online = true;
     cmd_data_.ctrl_source = CMD::ControlSource::CTRL_SOURCE_RC;
 
-    this->cmd_data_tp_.Publish(cmd_data_);
+    cmd_->FeedRC(cmd_data_);
 
     memcpy(&(this->last_data_), &(this->data_), sizeof(Data));
   }
@@ -394,7 +391,7 @@ class DR16 : public LibXR::Application {
     cmd_data_.chassis_online = false;
     cmd_data_.gimbal_online = false;
 
-    this->cmd_data_tp_.Publish(cmd_data_);
+    cmd_->FeedRC(cmd_data_);
   }
 
 #ifdef LIBXR_DEBUG_BUILD
