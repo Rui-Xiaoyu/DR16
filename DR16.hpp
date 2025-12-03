@@ -143,10 +143,9 @@ class DR16 : public LibXR::Application {
       : cmd_(&cmd),
         uart_(hw.Find<LibXR::UART>("uart_dr16")),
         sem_(0),
-        op_(sem_),
+        op_(sem_, 20),
         cmd_data_tp_(cmd_data_tp_name, sizeof(CMD::Data), nullptr, true) {
     uart_->SetConfig({100000, LibXR::UART::Parity::EVEN, 8, 1});
-
     /* 创建UART线程 */
     thread_uart_.Create(this, ThreadDr16, "uart_dr16", task_stack_depth_uart,
                         LibXR::Thread::Priority::HIGH);
@@ -170,30 +169,49 @@ class DR16 : public LibXR::Application {
    */
   static void ThreadDr16(DR16* dr16) {
     dr16->uart_->read_port_->Reset();
-    dr16->sem_.Post();
+    uint32_t no_frame_count = 0;
 
     while (true) {
-      if (dr16->uart_->read_port_->Size() != sizeof(Data) &&
-          dr16->uart_->read_port_->Size() != 0) {
+      auto intro = dr16->uart_->Read({nullptr, 0}, dr16->op_);
+
+      auto remain = dr16->uart_->read_port_->Size();
+      constexpr auto FRAME_SIZE = sizeof(Data);
+
+      if (remain < FRAME_SIZE) {
+        if (++no_frame_count > 20) {
+          dr16->Offline();
+          no_frame_count = 0;
+        }
         dr16->uart_->read_port_->Reset();
-        LibXR::Thread::Sleep(3);
+        LibXR::Thread::Sleep(2);
         continue;
       }
-      dr16->uart_->Read(dr16->data_, dr16->op_);
-      if(dr16->sem_.Wait(20) != LibXR::ErrorCode::OK){
-        dr16->Offline();
+
+      intro = dr16->uart_->Read(
+          LibXR::RawData{reinterpret_cast<uint8_t*>(&dr16->data_), FRAME_SIZE},
+          dr16->op_);
+
+      if (intro != LibXR::ErrorCode::OK) {
+        if (++no_frame_count > 20) {
+          dr16->Offline();
+          no_frame_count = 0;
+        }
         continue;
       }
+
+      no_frame_count = 0;
+
       if (dr16->DataCorrupted()) {
         dr16->uart_->read_port_->Reset();
         LibXR::Thread::Sleep(3);
-      } else {
-#ifdef LIBXR_DEBUG_BUILD
-        dr16->DataviewToData(dr16->data_view_, dr16->data_);
-#endif
-        dr16->PraseRC();
-        dr16->sem_.Post();
+        continue;
       }
+
+#ifdef LIBXR_DEBUG_BUILD
+      dr16->DataviewToData(dr16->data_view_, dr16->data_);
+#endif
+      dr16->PraseRC();
+      LibXR::Thread::Sleep(3);
     }
   }
 
@@ -452,9 +470,10 @@ class DR16 : public LibXR::Application {
   LibXR::UART* uart_;         /* UART接口指针 */
   LibXR::Event dr16_event_;   /* 事件处理器 */
   LibXR::Thread thread_uart_; /* UART线程 */
-  LibXR::Semaphore sem_;      /* 信号量 */
-  LibXR::ReadOperation op_;   /* 读操作 */
+  LibXR::Semaphore sem_;      /* 读操作信号量 */
+  LibXR::ReadOperation op_;   /* 读操作（阻塞型） */
   LibXR::Topic cmd_tp_;       /* 命令主题 */
   LibXR::Topic cmd_data_tp_;  /* 命令数据主题 */
   LibXR::Topic dr16_data_tp_; /* DR16原始数据主题 */
+  LibXR::Mutex mutex_;      /* 互斥锁 */
 };
