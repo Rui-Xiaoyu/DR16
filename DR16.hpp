@@ -183,9 +183,8 @@ class DR16 : public LibXR::Application {
         continue;
       }
       dr16->uart_->Read(dr16->data_, dr16->op_);
-      if (dr16->sem_.Wait(20) != LibXR::ErrorCode::OK) {
+      if(dr16->sem_.Wait(20) != LibXR::ErrorCode::OK){
         dr16->Offline();
-        LibXR::Thread::Sleep(3);
         continue;
       }
       if (dr16->DataCorrupted()) {
