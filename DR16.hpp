@@ -15,6 +15,8 @@ required_hardware: dr16 dma uart
 #include "CMD.hpp"
 #include "app_framework.hpp"
 #include "libxr_def.hpp"
+#include "libxr_time.hpp"
+#include "timebase.hpp"
 #include "uart.hpp"
 
 /**
@@ -172,21 +174,27 @@ class DR16 : public LibXR::Application {
     uint32_t no_frame_count = 0;
 
     while (true) {
+      auto now = LibXR::Timebase::GetMilliseconds();
       auto intro = dr16->uart_->Read({nullptr, 0}, dr16->op_);
 
       auto remain = dr16->uart_->read_port_->Size();
       constexpr auto FRAME_SIZE = sizeof(Data);
 
       if (remain < FRAME_SIZE) {
-        if (++no_frame_count > 20) {
-          dr16->Offline();
-          no_frame_count = 0;
+        auto no_frame_time = LibXR::Timebase::GetMilliseconds();
+        if (no_frame_count == 0) {
+          now = no_frame_time;
+        }
+        if (now - no_frame_time > 50) {
+          if (++no_frame_count > 20) {
+            dr16->Offline();
+            no_frame_count = 0;
+          }
         }
         dr16->uart_->read_port_->Reset();
         LibXR::Thread::Sleep(2);
         continue;
       }
-
       intro = dr16->uart_->Read(
           LibXR::RawData{reinterpret_cast<uint8_t*>(&dr16->data_), FRAME_SIZE},
           dr16->op_);
@@ -475,5 +483,5 @@ class DR16 : public LibXR::Application {
   LibXR::Topic cmd_tp_;       /* 命令主题 */
   LibXR::Topic cmd_data_tp_;  /* 命令数据主题 */
   LibXR::Topic dr16_data_tp_; /* DR16原始数据主题 */
-  LibXR::Mutex mutex_;      /* 互斥锁 */
+  LibXR::Mutex mutex_;        /* 互斥锁 */
 };
