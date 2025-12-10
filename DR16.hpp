@@ -172,9 +172,9 @@ class DR16 : public LibXR::Application {
   static void ThreadDr16(DR16* dr16) {
     dr16->uart_->read_port_->Reset();
     uint32_t no_frame_count = 0;
+    auto now = LibXR::Timebase::GetMilliseconds();
 
     while (true) {
-      auto now = LibXR::Timebase::GetMilliseconds();
       auto intro = dr16->uart_->Read({nullptr, 0}, dr16->op_);
 
       auto remain = dr16->uart_->read_port_->Size();
@@ -185,12 +185,16 @@ class DR16 : public LibXR::Application {
         if (no_frame_count == 0) {
           now = no_frame_time;
         }
-        if (now - no_frame_time > 50) {
-          if (++no_frame_count > 20) {
-            dr16->Offline();
-            no_frame_count = 0;
-          }
+
+        no_frame_count =
+            ((no_frame_time - now) > 50) ? (no_frame_count + 1) : 0;
+            
+        if (no_frame_count > 20) {
+          dr16->Offline();
+          no_frame_count = 0;
+          now = no_frame_time;
         }
+
         dr16->uart_->read_port_->Reset();
         LibXR::Thread::Sleep(2);
         continue;
