@@ -118,12 +118,12 @@ class DR16 : public LibXR::Application {
   }
 
   typedef struct __attribute__((packed)) {
-    uint16_t ch_r_x : 11;
-    uint16_t ch_r_y : 11;
-    uint16_t ch_l_x : 11;
-    uint16_t ch_l_y : 11;
-    uint8_t sw_r : 2;
-    uint8_t sw_l : 2;
+    uint16_t ch_r_x;
+    uint16_t ch_r_y;
+    uint16_t ch_l_x;
+    uint16_t ch_l_y;
+    uint8_t sw_r;
+    uint8_t sw_l;
     int16_t x;
     int16_t y;
     int16_t z;
