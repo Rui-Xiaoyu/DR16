@@ -12,9 +12,12 @@ required_hardware: dr16 dma uart
 === END MANIFEST === */
 // clang-format on
 
+#include <cstdint>
+
 #include "CMD.hpp"
 #include "app_framework.hpp"
 #include "libxr_def.hpp"
+#include "libxr_type.hpp"
 #include "uart.hpp"
 
 /**
@@ -148,7 +151,7 @@ class DR16 : public LibXR::Application {
     uart_->SetConfig({100000, LibXR::UART::Parity::EVEN, 8, 1});
     /* 创建UART线程 */
     thread_uart_.Create(this, ThreadDr16, "uart_dr16", task_stack_depth_uart,
-                        LibXR::Thread::Priority::HIGH);
+                        LibXR::Thread::Priority::MEDIUM);
     app.Register(*this);
   }
 
@@ -169,231 +172,184 @@ class DR16 : public LibXR::Application {
    */
   static void ThreadDr16(DR16* dr16) {
     dr16->uart_->read_port_->Reset();
-    uint32_t no_frame_count = 0;
+    while (dr16->sem_.Wait(0) != ErrorCode::OK) {
+    };
 
-    while (true) {
-      auto intro = dr16->uart_->Read({nullptr, 0}, dr16->op_);
+    uint8_t rx_buffer[18];
+    CMD::Data rc_data;
 
-      auto remain = dr16->uart_->read_port_->Size();
-      constexpr auto FRAME_SIZE = sizeof(Data);
+    while (1) {
+      dr16->uart_->Read(LibXR::RawData{rx_buffer, 18}, dr16->op_);
 
-      if (remain < FRAME_SIZE) {
-        if (++no_frame_count > 20) {
-          dr16->Offline();
-          no_frame_count = 0;
+      if (dr16->sem_.Wait(20) == ErrorCode::OK) {
+        if (dr16->ParseRC(rx_buffer, rc_data)) {
+          dr16->mutex_.Lock();
+          dr16->cmd_->FeedRC(rc_data);
+          dr16->mutex_.Unlock();
+        } else {
+          dr16->uart_->read_port_->Reset();
         }
+      } else {
+        dr16->Offline();
         dr16->uart_->read_port_->Reset();
-        LibXR::Thread::Sleep(2);
-        continue;
       }
-
-      intro = dr16->uart_->Read(
-          LibXR::RawData{reinterpret_cast<uint8_t*>(&dr16->data_), FRAME_SIZE},
-          dr16->op_);
-
-      if (intro != LibXR::ErrorCode::OK) {
-        if (++no_frame_count > 20) {
-          dr16->Offline();
-          no_frame_count = 0;
-        }
-        continue;
-      }
-
-      no_frame_count = 0;
-
-      if (dr16->DataCorrupted()) {
-        dr16->uart_->read_port_->Reset();
-        LibXR::Thread::Sleep(3);
-        continue;
-      }
-
-#ifdef LIBXR_DEBUG_BUILD
-      dr16->DataviewToData(dr16->data_view_, dr16->data_);
-#endif
-      dr16->PraseRC();
-      LibXR::Thread::Sleep(3);
     }
-  }
-
-  /**
-   * @brief 检查接收数据是否损坏
-   * @return true 数据损坏，false 数据正常
-   */
-  bool DataCorrupted() {
-    /* 检查各通道值是否在有效范围内 */
-    if ((this->data_.ch_r_x < DR16_CH_VALUE_MIN) ||
-        (this->data_.ch_r_x > DR16_CH_VALUE_MAX)) {
-      return true;
-    }
-    if ((data_.ch_r_y < DR16_CH_VALUE_MIN) ||
-        (data_.ch_r_y > DR16_CH_VALUE_MAX)) {
-      return true;
-    }
-    if ((data_.ch_l_x < DR16_CH_VALUE_MIN) ||
-        (data_.ch_l_x > DR16_CH_VALUE_MAX)) {
-      return true;
-    }
-    if ((data_.ch_l_y < DR16_CH_VALUE_MIN) ||
-        (data_.ch_l_y > DR16_CH_VALUE_MAX)) {
-      return true;
-    }
-    /* 检查拨杆值 */
-    if (data_.sw_l == 0) {
-      return true;
-    }
-
-    if (data_.sw_r == 0) {
-      return true;
-    }
-
-    return false;
   }
 
   /**
    * @brief 解析遥控器数据并转换为控制命令
    */
-  void PraseRC() {
-    if (DataCorrupted()) {
-      uart_->read_port_->Reset();
-      LibXR::Thread::Sleep(3);
-      return;
-    }
+  /**
+   * @brief 解析 DBUS 原始数据并生成控制指令
+   * @param raw_data 18字节的原始接收缓冲 (来自 ThreadDr16 的 rx_buffer)
+   * @param output_data 解析后的 CMD 数据 (用于提交给云台)
+   * @return true 解析成功, false 数据无效
+   */
+  bool ParseRC(const uint8_t* raw_data, CMD::Data& output_data) {
+    if (!raw_data) {
+      return false;
+    };
 
-    /* 初始化命令数据 */
-    cmd_data_ = CMD::Data();
+    Data curr_rc;
+    memset(&curr_rc, 0, sizeof(Data));
 
-    /* 检测拨杆开关状态变化 */
-    if (this->data_.sw_l != this->last_data_.sw_l) {
+    curr_rc.ch_r_x = ((raw_data[0] | raw_data[1] << 8) & 0x07FF);
+    curr_rc.ch_r_y = ((raw_data[1] >> 3 | raw_data[2] << 5) & 0x07FF);
+    curr_rc.ch_l_x =
+        ((raw_data[2] >> 6 | raw_data[3] << 2 | raw_data[4] << 10) & 0x07FF);
+    curr_rc.ch_l_y = ((raw_data[4] >> 1 | raw_data[5] << 7) & 0x07FF);
+
+    curr_rc.sw_r = ((raw_data[5] >> 4) & 0x0003);  // bits 4-5
+    curr_rc.sw_l = ((raw_data[5] >> 6) & 0x0003);  // bits 6-7
+
+    curr_rc.x = static_cast<int16_t>(raw_data[6] | raw_data[7] << 8);
+    curr_rc.y = static_cast<int16_t>(raw_data[8] | raw_data[9] << 8);
+    curr_rc.z = static_cast<int16_t>(raw_data[10] | raw_data[11] << 8);
+
+    curr_rc.press_l = raw_data[12];
+    curr_rc.press_r = raw_data[13];
+
+    curr_rc.key = static_cast<uint16_t>(raw_data[14] | raw_data[15] << 8);
+
+    curr_rc.res = static_cast<uint16_t>(raw_data[16] | raw_data[17] << 8);
+
+    output_data = CMD::Data();
+
+    if (curr_rc.sw_l != this->last_data_.sw_l) {
       this->dr16_event_.Active(
-          static_cast<uint32_t>(SwitchPos::DR16_SW_L_POS_TOP) +
-          this->data_.sw_l - 1);
+          static_cast<uint32_t>(SwitchPos::DR16_SW_L_POS_TOP) + curr_rc.sw_l -
+          1);
     }
-
-    if (this->data_.sw_r != this->last_data_.sw_r) {
+    if (curr_rc.sw_r != this->last_data_.sw_r) {
       this->dr16_event_.Active(
-          static_cast<uint32_t>(SwitchPos::DR16_SW_R_POS_TOP) +
-          this->data_.sw_r - 1);
+          static_cast<uint32_t>(SwitchPos::DR16_SW_R_POS_TOP) + curr_rc.sw_r -
+          1);
     }
 
     uint32_t tmp = 0;
 
-    /* 检测组合键 */
-    /* 检测Shift键 */
-    if (this->data_.key & RawValue(Key::KEY_SHIFT)) {
+    if (curr_rc.key & RawValue(Key::KEY_SHIFT)) {
       tmp += static_cast<uint32_t>(Key::KEY_NUM);
     }
-
-    /* 检测Ctrl键 */
-    if (this->data_.key & RawValue(Key::KEY_CTRL)) {
+    if (curr_rc.key & RawValue(Key::KEY_CTRL)) {
       tmp += 2 * static_cast<uint32_t>(Key::KEY_NUM);
     }
 
-    /* 检测按键变化 */
     for (int i = 0; i < 16; i++) {
-      if ((this->data_.key & (1 << i)) && !(this->last_data_.key & (1 << i))) {
+      if ((curr_rc.key & (1 << i)) && !(this->last_data_.key & (1 << i))) {
         this->dr16_event_.Active(static_cast<uint32_t>(Key::KEY_W) + i + tmp);
       }
     }
 
-    /* 控制模式切换 */
-    if (((this->data_.key & (RawValue(Key::KEY_SHIFT) |
-                             RawValue(Key::KEY_CTRL) | RawValue(Key::KEY_Q))) ==
-         (RawValue(Key::KEY_SHIFT) | RawValue(Key::KEY_CTRL) |
-          RawValue(Key::KEY_Q)))) {
+    uint16_t combo_sw = RawValue(Key::KEY_SHIFT) | RawValue(Key::KEY_CTRL) |
+                        RawValue(Key::KEY_Q);
+    uint16_t combo_mouse = RawValue(Key::KEY_SHIFT) | RawValue(Key::KEY_CTRL) |
+                           RawValue(Key::KEY_E);
+
+    if ((curr_rc.key & combo_sw) == combo_sw) {
       this->ctrl_source_ = ControlSource::DR16_CTRL_SOURCE_SW;
     }
 
-    /* 切换到键鼠控制模式 */
-    if (((this->data_.key & (RawValue(Key::KEY_SHIFT) |
-                             RawValue(Key::KEY_CTRL) | RawValue(Key::KEY_E))) ==
-         (RawValue(Key::KEY_SHIFT) | RawValue(Key::KEY_CTRL) |
-          RawValue(Key::KEY_E)))) {
+    if ((curr_rc.key & combo_mouse) == combo_mouse) {
       this->ctrl_source_ = ControlSource::DR16_CTRL_SOURCE_MOUSE;
     }
 
     constexpr float FULL_RANGE =
         static_cast<float>(DR16_CH_VALUE_MAX - DR16_CH_VALUE_MIN);
 
-    /* 键鼠控制模式 */
     if (this->ctrl_source_ == ControlSource::DR16_CTRL_SOURCE_MOUSE) {
-      /* 处理鼠标按键事件 */
-      if (this->data_.press_l && !this->last_data_.press_l) {
-        this->dr16_event_.Active(static_cast<uint32_t>(Key::KEY_L_PRESS));
-      }
-      if (this->data_.press_r && !this->last_data_.press_r) {
+      if (curr_rc.press_r && !this->last_data_.press_r) {
         this->dr16_event_.Active(static_cast<uint32_t>(Key::KEY_R_PRESS));
       }
-      if (!this->data_.press_l && this->last_data_.press_l) {
-        this->dr16_event_.Active(static_cast<uint32_t>(Key::KEY_L_RELEASE));
-      }
-      if (!this->data_.press_r && this->last_data_.press_r) {
+      if (!curr_rc.press_r && this->last_data_.press_r) {
         this->dr16_event_.Active(static_cast<uint32_t>(Key::KEY_R_RELEASE));
       }
 
-      /* 处理底盘控制 */
-      if (this->data_.key & RawValue(Key::KEY_A)) {
-        cmd_data_.chassis.x -= 0.5;
+      if (curr_rc.key & RawValue(Key::KEY_A)) {
+        output_data.chassis.x -= 0.5f;
       }
-      if (this->data_.key & RawValue(Key::KEY_D)) {
-        cmd_data_.chassis.x += 0.5;
+      if (curr_rc.key & RawValue(Key::KEY_D)) {
+        output_data.chassis.x += 0.5f;
       }
-      if (this->data_.key & RawValue(Key::KEY_S)) {
-        cmd_data_.chassis.y -= 0.5;
+      if (curr_rc.key & RawValue(Key::KEY_S)) {
+        output_data.chassis.y -= 0.5f;
       }
-      if (this->data_.key & RawValue(Key::KEY_W)) {
-        cmd_data_.chassis.y += 0.5;
-      }
-
-      /* 加速处理 */
-      if (this->data_.key & RawValue(Key::KEY_SHIFT)) {
-        cmd_data_.chassis.x *= 2;
-        cmd_data_.chassis.y *= 2;
+      if (curr_rc.key & RawValue(Key::KEY_W)) {
+        output_data.chassis.y += 0.5f;
       }
 
-      cmd_data_.chassis.z = 0.0f;
+      if (curr_rc.key & RawValue(Key::KEY_SHIFT)) {
+        output_data.chassis.x *= 2;
+        output_data.chassis.y *= 2;
+      }
 
-      /* 云台控制 - 鼠标模式 */
-      cmd_data_.gimbal.pit =
-          -static_cast<float>(this->data_.y) / 32768.0f * 1000.0f;
-      cmd_data_.gimbal.yaw =
-          -static_cast<float>(this->data_.x) / 32768.0f * 1000.0f;
+      output_data.chassis.z = 0.0f;
+
+      output_data.gimbal.pit =
+          -static_cast<float>(curr_rc.y) / 32768.0f * 1000.0f;
+      output_data.gimbal.yaw =
+          -static_cast<float>(curr_rc.x) / 32768.0f * 1000.0f;
+
+      if (curr_rc.press_l && !this->last_data_.press_l) {
+        output_data.launcher.isfire = true;
+      }
+      if (!curr_rc.press_l && this->last_data_.press_l) {
+        output_data.launcher.isfire = false;
+      }
     }
-    /* 遥控器控制模式 */
+
     else if (this->ctrl_source_ == ControlSource::DR16_CTRL_SOURCE_SW) {
-      /* 底盘控制 */
-      cmd_data_.chassis.x =
-          2 * (static_cast<float>(this->data_.ch_l_x) - DR16_CH_VALUE_MID) /
+      output_data.chassis.x =
+          2 * (static_cast<float>(curr_rc.ch_l_x) - DR16_CH_VALUE_MID) /
           FULL_RANGE;
-      cmd_data_.chassis.y =
-          2 * (static_cast<float>(this->data_.ch_l_y) - DR16_CH_VALUE_MID) /
+      output_data.chassis.y =
+          2 * (static_cast<float>(curr_rc.ch_l_y) - DR16_CH_VALUE_MID) /
           FULL_RANGE;
-      cmd_data_.chassis.z =
-          -2 * (static_cast<float>(this->data_.ch_r_x) - DR16_CH_VALUE_MID) /
-          FULL_RANGE;
-
-      /* 云台控制 */
-      cmd_data_.gimbal.yaw =
-          -2 * (static_cast<float>(this->data_.ch_r_x) - DR16_CH_VALUE_MID) /
-          FULL_RANGE;
-      cmd_data_.gimbal.pit =
-          2 * (static_cast<float>(this->data_.ch_r_y) - DR16_CH_VALUE_MID) /
+      output_data.chassis.z =
+          -2 * (static_cast<float>(curr_rc.ch_r_x) - DR16_CH_VALUE_MID) /
           FULL_RANGE;
 
-      /* 发射控制 */
-      if (this->data_.res == DR16_CH_VALUE_MIN) {
-        cmd_data_.launcher.isfire = true;
+      output_data.gimbal.yaw =
+          -2 * (static_cast<float>(curr_rc.ch_r_x) - DR16_CH_VALUE_MID) /
+          FULL_RANGE;
+      output_data.gimbal.pit =
+          2 * (static_cast<float>(curr_rc.ch_r_y) - DR16_CH_VALUE_MID) /
+          FULL_RANGE;
+
+      if (curr_rc.res == DR16_CH_VALUE_MIN) {
+        output_data.launcher.isfire = true;
       } else {
-        cmd_data_.launcher.isfire = false;
+        output_data.launcher.isfire = false;
       }
     }
 
-    cmd_data_.chassis_online = true;
-    cmd_data_.gimbal_online = true;
-    cmd_data_.ctrl_source = CMD::ControlSource::CTRL_SOURCE_RC;
+    output_data.chassis_online = true;
+    output_data.gimbal_online = true;
+    output_data.ctrl_source = CMD::ControlSource::CTRL_SOURCE_RC;
 
-    cmd_->FeedRC(cmd_data_);
+    this->last_data_ = curr_rc;
 
-    memcpy(&(this->last_data_), &(this->data_), sizeof(Data));
+    return true;
   }
 
   void Offline() {
@@ -459,13 +415,8 @@ class DR16 : public LibXR::Application {
   ControlSource ctrl_source_ =
       ControlSource::DR16_CTRL_SOURCE_SW; /* 当前控制源 */
 
-  Data data_;            /* 当前数据 */
   Data last_data_{};     /* 上一帧数据 */
   CMD::Data cmd_data_{}; /* 命令数据 */
-
-#ifdef LIBXR_DEBUG_BUILD
-  DataView data_view_; /* 调试用数据视图 */
-#endif
 
   LibXR::UART* uart_;         /* UART接口指针 */
   LibXR::Event dr16_event_;   /* 事件处理器 */
@@ -475,5 +426,5 @@ class DR16 : public LibXR::Application {
   LibXR::Topic cmd_tp_;       /* 命令主题 */
   LibXR::Topic cmd_data_tp_;  /* 命令数据主题 */
   LibXR::Topic dr16_data_tp_; /* DR16原始数据主题 */
-  LibXR::Mutex mutex_;      /* 互斥锁 */
+  LibXR::Mutex mutex_;        /* 互斥锁 */
 };
