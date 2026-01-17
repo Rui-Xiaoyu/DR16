@@ -13,6 +13,7 @@ required_hardware: dr16 dma uart
 // clang-format on
 
 #include <cstdint>
+#include <cstring>
 
 #include "CMD.hpp"
 #include "app_framework.hpp"
@@ -182,7 +183,7 @@ class DR16 : public LibXR::Application {
       dr16->uart_->Read(LibXR::RawData{rx_buffer, 18}, dr16->op_);
 
       if (dr16->sem_.Wait(20) == ErrorCode::OK) {
-        if (dr16->ParseRC(rx_buffer, rc_data)) {
+        if (dr16->ParseRC(rx_buffer, rc_data) == ErrorCode::OK) {
           dr16->mutex_.Lock();
           dr16->cmd_->FeedRC(rc_data);
           dr16->mutex_.Unlock();
@@ -192,6 +193,13 @@ class DR16 : public LibXR::Application {
       } else {
         dr16->Offline();
         dr16->uart_->read_port_->Reset();
+        CMD::Data safe_data{};
+        memset(&safe_data, 0, sizeof(CMD::Data));
+        dr16->dr16_event_.Active(static_cast<uint32_t>(SwitchPos::DR16_SW_L_POS_TOP));
+        dr16->dr16_event_.Active(static_cast<uint32_t>(SwitchPos::DR16_SW_R_POS_TOP));
+        dr16->mutex_.Lock();
+        dr16->cmd_->FeedRC(safe_data);
+        dr16->mutex_.Unlock();
       }
     }
   }
@@ -205,9 +213,9 @@ class DR16 : public LibXR::Application {
    * @param output_data 解析后的 CMD 数据 (用于提交给云台)
    * @return true 解析成功, false 数据无效
    */
-  bool ParseRC(const uint8_t* raw_data, CMD::Data& output_data) {
+  ErrorCode ParseRC(const uint8_t* raw_data, CMD::Data& output_data) {
     if (!raw_data) {
-      return false;
+      return ErrorCode::PTR_NULL;
     };
 
     Data curr_rc;
@@ -232,6 +240,21 @@ class DR16 : public LibXR::Application {
     curr_rc.key = static_cast<uint16_t>(raw_data[14] | raw_data[15] << 8);
 
     curr_rc.res = static_cast<uint16_t>(raw_data[16] | raw_data[17] << 8);
+
+    if (curr_rc.ch_l_x < DR16_CH_VALUE_MIN ||
+        curr_rc.ch_l_x > DR16_CH_VALUE_MAX ||
+        curr_rc.ch_l_y < DR16_CH_VALUE_MIN ||
+        curr_rc.ch_l_y > DR16_CH_VALUE_MAX ||
+        curr_rc.ch_r_x < DR16_CH_VALUE_MIN ||
+        curr_rc.ch_r_x > DR16_CH_VALUE_MAX ||
+        curr_rc.ch_r_y < DR16_CH_VALUE_MIN ||
+        curr_rc.ch_r_y > DR16_CH_VALUE_MAX) {
+      return ErrorCode::CHECK_ERR;
+    }
+
+    if (curr_rc.sw_l == 0 || curr_rc.sw_r == 0) {
+      return ErrorCode::CHECK_ERR;
+    }
 
     output_data = CMD::Data();
 
@@ -349,7 +372,7 @@ class DR16 : public LibXR::Application {
 
     this->last_data_ = curr_rc;
 
-    return true;
+    return ErrorCode::OK;
   }
 
   void Offline() {
