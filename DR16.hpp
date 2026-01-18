@@ -154,6 +154,8 @@ class DR16 : public LibXR::Application {
     thread_uart_.Create(this, ThreadDr16, "uart_dr16", task_stack_depth_uart,
                         LibXR::Thread::Priority::MEDIUM);
     app.Register(*this);
+    int a = 0;
+    UNUSED(a);
   }
 
   /**
@@ -176,11 +178,12 @@ class DR16 : public LibXR::Application {
     while (dr16->sem_.Wait(0) != ErrorCode::OK) {
     };
 
-    uint8_t rx_buffer[18];
+    constexpr std::size_t RX_BUFFER_SIZE = 18;
+    uint8_t rx_buffer[RX_BUFFER_SIZE];
     CMD::Data rc_data;
 
     while (1) {
-      dr16->uart_->Read(LibXR::RawData{rx_buffer, 18}, dr16->op_);
+      dr16->uart_->Read(LibXR::RawData{rx_buffer, RX_BUFFER_SIZE}, dr16->op_);
 
       if (dr16->sem_.Wait(20) == ErrorCode::OK) {
         if (dr16->ParseRC(rx_buffer, rc_data) == ErrorCode::OK) {
@@ -191,10 +194,12 @@ class DR16 : public LibXR::Application {
           dr16->uart_->read_port_->Reset();
         }
       } else {
+        XR_LOG_WARN("DR16 Offline!");
         dr16->Offline();
         dr16->uart_->read_port_->Reset();
         CMD::Data safe_data{};
         memset(&safe_data, 0, sizeof(CMD::Data));
+        memset(&dr16->last_data_, 0, sizeof(dr16->last_data_));
         dr16->dr16_event_.Active(static_cast<uint32_t>(SwitchPos::DR16_SW_L_POS_TOP));
         dr16->dr16_event_.Active(static_cast<uint32_t>(SwitchPos::DR16_SW_R_POS_TOP));
         dr16->mutex_.Lock();
@@ -218,8 +223,7 @@ class DR16 : public LibXR::Application {
       return ErrorCode::PTR_NULL;
     };
 
-    Data curr_rc;
-    memset(&curr_rc, 0, sizeof(Data));
+    Data curr_rc{};
 
     curr_rc.ch_r_x = ((raw_data[0] | raw_data[1] << 8) & 0x07FF);
     curr_rc.ch_r_y = ((raw_data[1] >> 3 | raw_data[2] << 5) & 0x07FF);
