@@ -183,15 +183,18 @@ class DR16 : public LibXR::Application {
     CMD::Data rc_data;
 
     while (1) {
-      dr16->uart_->Read(LibXR::RawData{rx_buffer, RX_BUFFER_SIZE}, dr16->op_);
-
       if (dr16->sem_.Wait(20) == ErrorCode::OK) {
-        if (dr16->ParseRC(rx_buffer, rc_data) == ErrorCode::OK) {
-          dr16->mutex_.Lock();
-          dr16->cmd_->FeedRC(rc_data);
-          dr16->mutex_.Unlock();
-        } else {
-          dr16->uart_->read_port_->Reset();
+        if (dr16->uart_->read_port_->Size() >= RX_BUFFER_SIZE) {
+          dr16->uart_->Read(LibXR::RawData{rx_buffer, RX_BUFFER_SIZE},
+                            dr16->op_);
+
+          if (dr16->ParseRC(rx_buffer, rc_data) == ErrorCode::OK) {
+            dr16->mutex_.Lock();
+            dr16->cmd_->FeedRC(rc_data);
+            dr16->mutex_.Unlock();
+          } else {
+            dr16->uart_->read_port_->Reset();
+          }
         }
       } else {
         XR_LOG_WARN("DR16 Offline!");
@@ -200,8 +203,10 @@ class DR16 : public LibXR::Application {
         CMD::Data safe_data{};
         memset(&safe_data, 0, sizeof(CMD::Data));
         memset(&dr16->last_data_, 0, sizeof(dr16->last_data_));
-        dr16->dr16_event_.Active(static_cast<uint32_t>(SwitchPos::DR16_SW_L_POS_TOP));
-        dr16->dr16_event_.Active(static_cast<uint32_t>(SwitchPos::DR16_SW_R_POS_TOP));
+        dr16->dr16_event_.Active(
+            static_cast<uint32_t>(SwitchPos::DR16_SW_L_POS_TOP));
+        dr16->dr16_event_.Active(
+            static_cast<uint32_t>(SwitchPos::DR16_SW_R_POS_TOP));
         dr16->mutex_.Lock();
         dr16->cmd_->FeedRC(safe_data);
         dr16->mutex_.Unlock();
