@@ -234,6 +234,10 @@ class DR16 : public LibXR::Application {
 
     curr_rc.res = static_cast<uint16_t>(raw_data[16] | raw_data[17] << 8);
 
+#ifndef NDEBUG
+    this->data_review_ = curr_rc;
+#endif
+
     if (curr_rc.ch_l_x < DR16_CH_VALUE_MIN ||
         curr_rc.ch_l_x > DR16_CH_VALUE_MAX ||
         curr_rc.ch_l_y < DR16_CH_VALUE_MIN ||
@@ -433,7 +437,9 @@ class DR16 : public LibXR::Application {
 
   Data last_data_{};     /* 上一帧数据 */
   CMD::Data cmd_data_{}; /* 命令数据 */
-
+#ifndef NDEBUG
+  Data data_review_; /* 命令数据预览 */
+#endif
   LibXR::UART* uart_;         /* UART接口指针 */
   LibXR::Event dr16_event_;   /* 事件处理器 */
   LibXR::Thread thread_uart_; /* UART线程 */
