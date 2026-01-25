@@ -179,7 +179,7 @@ class DR16 : public LibXR::Application {
     dr16->uart_->read_port_->Reset();
 
     constexpr std::size_t RX_BUFFER_SIZE = 18;
-    uint8_t rx_buffer[RX_BUFFER_SIZE];
+    uint8_t rx_buffer[RX_BUFFER_SIZE] = {0};
     CMD::Data rc_data;
 
     dr16->uart_->Read(LibXR::RawData{rx_buffer, RX_BUFFER_SIZE}, dr16->op_);
