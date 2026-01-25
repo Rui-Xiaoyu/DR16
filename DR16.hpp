@@ -227,8 +227,8 @@ class DR16 : public LibXR::Application {
     curr_rc.y = static_cast<int16_t>(raw_data[8] | raw_data[9] << 8);
     curr_rc.z = static_cast<int16_t>(raw_data[10] | raw_data[11] << 8);
 
-    curr_rc.press_l = raw_data[12];
-    curr_rc.press_r = raw_data[13];
+    curr_rc.press_r = raw_data[12];
+    curr_rc.press_l = raw_data[13];
 
     curr_rc.key = static_cast<uint16_t>(raw_data[14] | raw_data[15] << 8);
 
