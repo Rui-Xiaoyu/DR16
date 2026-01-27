@@ -7,7 +7,6 @@ module_description: Receiver parsing
 constructor_args:
   - CMD: '@cmd'
   - task_stack_depth_uart: 2048
-  - cmd_data_tp_name: "cmd_raw_data_"
 required_hardware: dr16 dma uart
 === END MANIFEST === */
 // clang-format on
@@ -145,12 +144,11 @@ class DR16 : public LibXR::Application {
    * @param cmd_data_tp_name CMD数据主题名称
    */
   DR16(LibXR::HardwareContainer& hw, LibXR::ApplicationManager& app, CMD& cmd,
-       uint32_t task_stack_depth_uart, const char* cmd_data_tp_name)
+       uint32_t task_stack_depth_uart)
       : cmd_(&cmd),
         uart_(hw.Find<LibXR::UART>("uart_dr16")),
         sem_(0),
-        op_(sem_, 20),
-        cmd_data_tp_(cmd_data_tp_name, sizeof(CMD::Data), nullptr, true) {
+        op_(sem_, 20){
     uart_->SetConfig({100000, LibXR::UART::Parity::EVEN, 8, 1});
     /* 创建UART线程 */
     thread_uart_.Create(this, ThreadDr16, "uart_dr16", task_stack_depth_uart,
@@ -445,8 +443,5 @@ class DR16 : public LibXR::Application {
   LibXR::Thread thread_uart_; /* UART线程 */
   LibXR::Semaphore sem_;      /* 读操作信号量 */
   LibXR::ReadOperation op_;   /* 读操作（阻塞型） */
-  LibXR::Topic cmd_tp_;       /* 命令主题 */
-  LibXR::Topic cmd_data_tp_;  /* 命令数据主题 */
-  LibXR::Topic dr16_data_tp_; /* DR16原始数据主题 */
   LibXR::Mutex mutex_;        /* 互斥锁 */
 };
