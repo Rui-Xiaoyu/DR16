@@ -16,8 +16,6 @@ required_hardware: dr16 dma uart
 
 #include "CMD.hpp"
 #include "app_framework.hpp"
-#include "libxr_def.hpp"
-#include "libxr_type.hpp"
 #include "uart.hpp"
 
 /**
@@ -180,19 +178,20 @@ class DR16 : public LibXR::Application {
     uint8_t rx_buffer[RX_BUFFER_SIZE] = {0};
     CMD::Data rc_data;
 
-    dr16->uart_->Read(LibXR::RawData{rx_buffer, RX_BUFFER_SIZE}, dr16->op_);
+    auto next_read = LibXR::RawData{rx_buffer, RX_BUFFER_SIZE};
+
     while (1) {
+      if (dr16->uart_->Read(next_read, dr16->op_) == ErrorCode::OK) {
         if (dr16->ParseRC(rx_buffer, rc_data) == ErrorCode::OK) {
-          dr16->mutex_.Lock();
+          dr16->last_time_ = LibXR::Timebase::GetMilliseconds();
           dr16->cmd_->FeedRC(rc_data);
-          dr16->mutex_.Unlock();
-          dr16->uart_->Read(LibXR::RawData{rx_buffer, RX_BUFFER_SIZE},
-                            dr16->op_);
+          next_read = LibXR::RawData{rx_buffer, RX_BUFFER_SIZE};
         } else {
           memmove(rx_buffer, rx_buffer + 1, RX_BUFFER_SIZE - 1);
-          dr16->uart_->Read(LibXR::RawData{&rx_buffer[RX_BUFFER_SIZE - 1], 1},
-                            dr16->op_);
+          next_read = LibXR::RawData{&rx_buffer[RX_BUFFER_SIZE - 1], 1};
         }
+      }
+      dr16->CheckoutOffline();
     }
   }
 
@@ -443,5 +442,13 @@ class DR16 : public LibXR::Application {
   LibXR::Thread thread_uart_; /* UART线程 */
   LibXR::Semaphore sem_;      /* 读操作信号量 */
   LibXR::ReadOperation op_;   /* 读操作（阻塞型） */
-  LibXR::Mutex mutex_;        /* 互斥锁 */
+  LibXR::MillisecondTimestamp last_time_{}; /* 上次接收时间 */
+
+  /*--------------------------工具函数-------------------------------------------------*/
+  void CheckoutOffline(){
+    auto current_time = LibXR::Timebase::GetMilliseconds();
+    if ((current_time - last_time_).ToMillisecond() > 100) {
+      Offline();
+    }
+  }
 };
