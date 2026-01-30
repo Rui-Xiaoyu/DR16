@@ -6,7 +6,6 @@ module_name: DR16
 module_description: Receiver parsing
 constructor_args:
   - CMD: '@cmd'
-  - task_stack_depth_uart: 2048
 required_hardware: dr16 dma uart
 === END MANIFEST === */
 // clang-format on
@@ -141,19 +140,19 @@ class DR16 : public LibXR::Application {
    * @param task_stack_depth_uart UART任务栈深度
    * @param cmd_data_tp_name CMD数据主题名称
    */
-  DR16(LibXR::HardwareContainer& hw, LibXR::ApplicationManager& app, CMD& cmd,
-       uint32_t task_stack_depth_uart)
-      : cmd_(&cmd),
-        uart_(hw.Find<LibXR::UART>("uart_dr16")),
-        sem_(0),
-        op_(sem_, 20){
+  DR16(LibXR::HardwareContainer& hw, LibXR::ApplicationManager& app, CMD& cmd)
+      : cmd_(&cmd), uart_(hw.Find<LibXR::UART>("uart_dr16")) {
     uart_->SetConfig({100000, LibXR::UART::Parity::EVEN, 8, 1});
-    /* 创建UART线程 */
-    thread_uart_.Create(this, ThreadDr16, "uart_dr16", task_stack_depth_uart,
-                        LibXR::Thread::Priority::MEDIUM);
+
+    callback_ = LibXR::Callback<LibXR::ErrorCode>::Create(
+        [](bool in_isr, DR16* self, LibXR::ErrorCode err) {
+          self->InputCallback(in_isr, err);
+        },
+        this);
+    read_op_ = LibXR::ReadOperation(callback_);
+    uart_->Read({rx_buffer_, 18}, read_op_);
+
     app.Register(*this);
-    int a = 0;
-    UNUSED(a);
   }
 
   /**
@@ -165,34 +164,26 @@ class DR16 : public LibXR::Application {
   /**
    * @brief 监控函数重写
    */
-  void OnMonitor() override {}
+  void OnMonitor() override { CheckoutOffline(); }
 
-  /**
-   * @brief DR16 UART读取线程函数
-   * @param dr16 DR16实例指针
-   */
-  static void ThreadDr16(DR16* dr16) {
-    dr16->uart_->read_port_->Reset();
+  void InputCallback(bool in_isr, LibXR::ErrorCode err) {
+    UNUSED(in_isr);
+    if (err == ErrorCode::OK) {
+      RawPacket pack;
+      memcpy(pack.data, rx_buffer_, 18);
+      while (recv_queue_.Push(pack) != ErrorCode::OK) {
+        recv_queue_.Pop();
+      }
 
-    constexpr std::size_t RX_BUFFER_SIZE = 18;
-    uint8_t rx_buffer[RX_BUFFER_SIZE] = {0};
-    CMD::Data rc_data;
-
-    auto next_read = LibXR::RawData{rx_buffer, RX_BUFFER_SIZE};
-
-    while (1) {
-      if (dr16->uart_->Read(next_read, dr16->op_) == ErrorCode::OK) {
-        if (dr16->ParseRC(rx_buffer, rc_data) == ErrorCode::OK) {
-          dr16->last_time_ = LibXR::Timebase::GetMilliseconds();
-          dr16->cmd_->FeedRC(rc_data);
-          next_read = LibXR::RawData{rx_buffer, RX_BUFFER_SIZE};
-        } else {
-          memmove(rx_buffer, rx_buffer + 1, RX_BUFFER_SIZE - 1);
-          next_read = LibXR::RawData{&rx_buffer[RX_BUFFER_SIZE - 1], 1};
+      CMD::Data rc_data;
+      while (recv_queue_.Pop(pack) == ErrorCode::OK) {
+        if (ParseRC(pack.data, rc_data) == ErrorCode::OK) {
+          last_time_ = LibXR::Timebase::GetMilliseconds();
+          cmd_->FeedRC(rc_data);
         }
       }
-      dr16->CheckoutOffline();
     }
+    uart_->Read({rx_buffer_, 18}, read_op_);
   }
 
   /**
@@ -439,9 +430,13 @@ class DR16 : public LibXR::Application {
 #endif
   LibXR::UART* uart_;         /* UART接口指针 */
   LibXR::Event dr16_event_;   /* 事件处理器 */
-  LibXR::Thread thread_uart_; /* UART线程 */
-  LibXR::Semaphore sem_;      /* 读操作信号量 */
-  LibXR::ReadOperation op_;   /* 读操作（阻塞型） */
+  LibXR::Callback<LibXR::ErrorCode> callback_;
+  LibXR::ReadOperation read_op_;
+  struct RawPacket {
+    uint8_t data[18];
+  };
+  LibXR::LockFreeQueue<RawPacket> recv_queue_{1};
+  uint8_t rx_buffer_[18]{};
   LibXR::MillisecondTimestamp last_time_{}; /* 上次接收时间 */
 
   /*--------------------------工具函数-------------------------------------------------*/
