@@ -6,6 +6,7 @@ module_name: DR16
 module_description: Receiver parsing
 constructor_args:
   - CMD: '@cmd'
+  - task_stack_depth_uart: 2048
 required_hardware: dr16 dma uart
 === END MANIFEST === */
 // clang-format on
@@ -140,19 +141,19 @@ class DR16 : public LibXR::Application {
    * @param task_stack_depth_uart UART任务栈深度
    * @param cmd_data_tp_name CMD数据主题名称
    */
-  DR16(LibXR::HardwareContainer& hw, LibXR::ApplicationManager& app, CMD& cmd)
-      : cmd_(&cmd), uart_(hw.Find<LibXR::UART>("uart_dr16")) {
+  DR16(LibXR::HardwareContainer& hw, LibXR::ApplicationManager& app, CMD& cmd,
+       uint32_t task_stack_depth_uart)
+      : cmd_(&cmd),
+        uart_(hw.Find<LibXR::UART>("uart_dr16")),
+        sem_(0),
+        op_(sem_, 20) {
     uart_->SetConfig({100000, LibXR::UART::Parity::EVEN, 8, 1});
-
-    callback_ = LibXR::Callback<LibXR::ErrorCode>::Create(
-        [](bool in_isr, DR16* self, LibXR::ErrorCode err) {
-          self->InputCallback(in_isr, err);
-        },
-        this);
-    read_op_ = LibXR::ReadOperation(callback_);
-    uart_->Read({rx_buffer_, 18}, read_op_);
-
+    /* 创建UART线程 */
+    thread_uart_.Create(this, ThreadDr16, "uart_dr16", task_stack_depth_uart,
+                        LibXR::Thread::Priority::MEDIUM);
     app.Register(*this);
+    int a = 0;
+    UNUSED(a);
   }
 
   /**
@@ -164,26 +165,35 @@ class DR16 : public LibXR::Application {
   /**
    * @brief 监控函数重写
    */
-  void OnMonitor() override { CheckoutOffline(); }
+  void OnMonitor() override {}
 
-  void InputCallback(bool in_isr, LibXR::ErrorCode err) {
-    UNUSED(in_isr);
-    if (err == ErrorCode::OK) {
-      RawPacket pack;
-      memcpy(pack.data, rx_buffer_, 18);
-      while (recv_queue_.Push(pack) != ErrorCode::OK) {
-        recv_queue_.Pop();
-      }
+  /**
+   * @brief DR16 UART读取线程函数
+   * @param dr16 DR16实例指针
+   */
+  static void ThreadDr16(DR16* dr16) {
+    dr16->uart_->read_port_->Reset();
 
-      CMD::Data rc_data;
-      while (recv_queue_.Pop(pack) == ErrorCode::OK) {
-        if (ParseRC(pack.data, rc_data) == ErrorCode::OK) {
-          last_time_ = LibXR::Timebase::GetMilliseconds();
-          cmd_->FeedRC(rc_data);
+    constexpr std::size_t RX_BUFFER_SIZE = 18;
+    uint8_t rx_buffer[RX_BUFFER_SIZE] = {0};
+    CMD::Data rc_data;
+
+    auto next_read = LibXR::RawData{rx_buffer, RX_BUFFER_SIZE};
+
+    while (1) {
+      if (dr16->uart_->Read(next_read, dr16->op_) == ErrorCode::OK) {
+        if (dr16->ParseRC(rx_buffer, rc_data) == ErrorCode::OK) {
+          dr16->last_time_ = LibXR::Timebase::GetMilliseconds();
+          dr16->cmd_->FeedRC(rc_data);
+          next_read = LibXR::RawData{rx_buffer, RX_BUFFER_SIZE};
+        } else {
+          memmove(rx_buffer, rx_buffer + 1, RX_BUFFER_SIZE - 1);
+          next_read = LibXR::RawData{&rx_buffer[RX_BUFFER_SIZE - 1], 1};
         }
       }
+      dr16->CheckoutOffline();
     }
-    uart_->Read({rx_buffer_, 18}, read_op_);
+    dr16->thread_uart_.Sleep(5);
   }
 
   /**
@@ -284,6 +294,8 @@ class DR16 : public LibXR::Application {
 
     constexpr float FULL_RANGE =
         static_cast<float>(DR16_CH_VALUE_MAX - DR16_CH_VALUE_MIN);
+    constexpr float INV_FULL_RANGE = 1.0f / FULL_RANGE;
+    constexpr float MOUSE_SCALER = 1000.0f / 32768.0f;
 
     if (this->ctrl_source_ == ControlSource::DR16_CTRL_SOURCE_MOUSE) {
       if (curr_rc.press_r && !this->last_data_.press_r) {
@@ -314,9 +326,9 @@ class DR16 : public LibXR::Application {
       output_data.chassis.z = 0.0f;
 
       output_data.gimbal.pit =
-          -static_cast<float>(curr_rc.y) / 32768.0f * 1000.0f;
+          -static_cast<float>(curr_rc.y) * MOUSE_SCALER;
       output_data.gimbal.yaw =
-          -static_cast<float>(curr_rc.x) / 32768.0f * 1000.0f;
+          -static_cast<float>(curr_rc.x) * MOUSE_SCALER;
 
       if (curr_rc.press_l && !this->last_data_.press_l) {
         output_data.launcher.isfire = true;
@@ -328,21 +340,21 @@ class DR16 : public LibXR::Application {
 
     else if (this->ctrl_source_ == ControlSource::DR16_CTRL_SOURCE_SW) {
       output_data.chassis.x =
-          2 * (static_cast<float>(curr_rc.ch_l_x) - DR16_CH_VALUE_MID) /
-          FULL_RANGE;
+          2 * (static_cast<float>(curr_rc.ch_l_x) - DR16_CH_VALUE_MID) *
+          INV_FULL_RANGE;
       output_data.chassis.y =
-          2 * (static_cast<float>(curr_rc.ch_l_y) - DR16_CH_VALUE_MID) /
-          FULL_RANGE;
+          2 * (static_cast<float>(curr_rc.ch_l_y) - DR16_CH_VALUE_MID) *
+          INV_FULL_RANGE;
       output_data.chassis.z =
-          -2 * (static_cast<float>(curr_rc.ch_r_x) - DR16_CH_VALUE_MID) /
-          FULL_RANGE;
+          -2 * (static_cast<float>(curr_rc.ch_r_x) - DR16_CH_VALUE_MID) *
+          INV_FULL_RANGE;
 
       output_data.gimbal.yaw =
-          -2 * (static_cast<float>(curr_rc.ch_r_x) - DR16_CH_VALUE_MID) /
-          FULL_RANGE;
+          -2 * (static_cast<float>(curr_rc.ch_r_x) - DR16_CH_VALUE_MID) *
+          INV_FULL_RANGE;
       output_data.gimbal.pit =
-          2 * (static_cast<float>(curr_rc.ch_r_y) - DR16_CH_VALUE_MID) /
-          FULL_RANGE;
+          2 * (static_cast<float>(curr_rc.ch_r_y) - DR16_CH_VALUE_MID) *
+          INV_FULL_RANGE;
 
       if (curr_rc.res == DR16_CH_VALUE_MIN) {
         output_data.launcher.isfire = true;
@@ -428,19 +440,15 @@ class DR16 : public LibXR::Application {
 #ifndef NDEBUG
   Data data_review_; /* 命令数据预览 */
 #endif
-  LibXR::UART* uart_;         /* UART接口指针 */
-  LibXR::Event dr16_event_;   /* 事件处理器 */
-  LibXR::Callback<LibXR::ErrorCode> callback_;
-  LibXR::ReadOperation read_op_;
-  struct RawPacket {
-    uint8_t data[18];
-  };
-  LibXR::LockFreeQueue<RawPacket> recv_queue_{1};
-  uint8_t rx_buffer_[18]{};
+  LibXR::UART* uart_;                       /* UART接口指针 */
+  LibXR::Event dr16_event_;                 /* 事件处理器 */
+  LibXR::Thread thread_uart_;               /* UART线程 */
+  LibXR::Semaphore sem_;                    /* 读操作信号量 */
+  LibXR::ReadOperation op_;                 /* 读操作（阻塞型） */
   LibXR::MillisecondTimestamp last_time_{}; /* 上次接收时间 */
 
   /*--------------------------工具函数-------------------------------------------------*/
-  void CheckoutOffline(){
+  void CheckoutOffline() {
     auto current_time = LibXR::Timebase::GetMilliseconds();
     if ((current_time - last_time_).ToMillisecond() > 100) {
       Offline();
