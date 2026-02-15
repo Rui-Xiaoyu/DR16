@@ -1,35 +1,42 @@
-# DR16 模块
+# DR16
 
-## 模块名称
-DR16
+## 1. 模块作用
+DR16 遥控解析模块。将 DBUS 数据转换为 CMD 输入和事件。
+Manifest 描述：Receiver parsing
 
-## 模块描述
-大疆 DR16 接收机解析模块，负责从 UART 读取遥控器数据并解析为结构体，供其他模块订阅和使用。
+## 2. 主要函数说明
+1. ThreadDr16: UART 线程读取并分发遥控数据。
+2. ParseRC: 解析原始帧并生成 CMD::Data。
+3. CheckoutOffline / Offline: 离线检测与失控处理。
+4. GetEvent: 对外暴露事件绑定入口。
 
-## 依赖硬件
-- UART（名称：uart_dr16，协议：DBUS,波特率 100000，偶校验，8 数据位，1 停止位）
+## 3. 接入步骤
+1. 添加模块并确保 uart_dr16 配置正确。
+2. 把解析结果喂给 CMD。
+3. 在 EventBinder 中绑定开关和按键事件。
 
-## 构造参数
-- `task_stack_depth_uart`：UART 线程栈深度(单位：bit)
+标准命令流程：
+    xrobot_add_mod DR16 --instance-id dr16
+    xrobot_gen_main
+    cube-cmake --build /home/leo/Documents/bsp-dev-c/build/debug --
 
-## 主要功能
-- 解析遥控器摇杆、拨杆、鼠标、按键等数据
-- 数据校验，自动丢弃损坏数据
-- 发布解析后的数据到 Topic（`dr16_cmd`）
+## 4. 配置示例（YAML）
+module: DR16
+entry_header: Modules/DR16/DR16.hpp
+constructor_args:
+  - CMD: '@cmd'
+  - task_stack_depth_uart: 2048
+template_args:
+[]
 
-## 主要结构体
-- `Data`：原始数据结构（含位域）
-- `DataView`：普通结构体，便于直接访问各项数据
+## 5. 依赖与硬件
+Required Hardware:
+- dr16
+- dma
+- uart
 
-## 枚举说明
-- `ControlSource`：控制来源（遥控/鼠标）
-- `SwitchPos`：开关位置枚举
-- `Key`：按键枚举，支持组合键编码
+Depends:
+[]
 
-## 主要方法
-- `DataCorrupted()`：判断数据是否错位
-- `DataviewToData()`：将原始数据转换为普通结构体,DeBug模式下使用
-- `Thread_Dr16()`：UART 读取线程，自动发布数据
-
-## Topic
-- `dr16_cmd`：发布解析后的遥控数据
+## 6. 代码入口
+Modules/DR16/DR16.hpp
