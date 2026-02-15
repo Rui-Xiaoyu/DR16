@@ -325,10 +325,8 @@ class DR16 : public LibXR::Application {
 
       output_data.chassis.z = 0.0f;
 
-      output_data.gimbal.pit =
-          -static_cast<float>(curr_rc.y) * MOUSE_SCALER;
-      output_data.gimbal.yaw =
-          -static_cast<float>(curr_rc.x) * MOUSE_SCALER;
+      output_data.gimbal.pit = -static_cast<float>(curr_rc.y) * MOUSE_SCALER;
+      output_data.gimbal.yaw = -static_cast<float>(curr_rc.x) * MOUSE_SCALER;
 
       if (curr_rc.press_l && !this->last_data_.press_l) {
         output_data.launcher.isfire = true;
