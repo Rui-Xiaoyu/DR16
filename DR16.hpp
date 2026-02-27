@@ -319,13 +319,14 @@ class DR16 : public LibXR::Application {
       }
 
       if (curr_rc.key & RawValue(Key::KEY_SHIFT)) {
-        output_data.chassis.x *= 2;
-        output_data.chassis.y *= 2;
+        output_data.chassis.boost = true;
+      } else {
+        output_data.chassis.boost = false;
       }
 
       output_data.chassis.z = 0.0f;
 
-      output_data.gimbal.pit = -static_cast<float>(curr_rc.y) * MOUSE_SCALER;
+      output_data.gimbal.pit = static_cast<float>(curr_rc.y) * MOUSE_SCALER;
       output_data.gimbal.yaw = -static_cast<float>(curr_rc.x) * MOUSE_SCALER;
 
       if (curr_rc.press_l && !this->last_data_.press_l) {
@@ -346,6 +347,7 @@ class DR16 : public LibXR::Application {
       output_data.chassis.z =
           -2 * (static_cast<float>(curr_rc.ch_r_x) - DR16_CH_VALUE_MID) *
           INV_FULL_RANGE;
+      output_data.chassis.boost = false;  /* 遥控器模式默认不开启功率加成 */
 
       output_data.gimbal.yaw =
           -2 * (static_cast<float>(curr_rc.ch_r_x) - DR16_CH_VALUE_MID) *
