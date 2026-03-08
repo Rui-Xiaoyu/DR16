@@ -347,7 +347,7 @@ class DR16 : public LibXR::Application {
       output_data.chassis.z =
           -2 * (static_cast<float>(curr_rc.ch_r_x) - DR16_CH_VALUE_MID) *
           INV_FULL_RANGE;
-      output_data.chassis.boost = false;  /* 遥控器模式默认不开启功率加成 */
+      output_data.chassis.boost = false; /* 遥控器模式默认不开启功率加成 */
 
       output_data.gimbal.yaw =
           -2 * (static_cast<float>(curr_rc.ch_r_x) - DR16_CH_VALUE_MID) *
