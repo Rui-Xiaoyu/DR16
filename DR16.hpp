@@ -7,6 +7,7 @@ module_description: Receiver parsing
 constructor_args:
   - CMD: '@cmd'
   - task_stack_depth_uart: 2048
+  - thread_priority_uart: LibXR::Thread::Priority::HIGH
 required_hardware: dr16 dma uart
 === END MANIFEST === */
 // clang-format on
@@ -142,7 +143,9 @@ class DR16 : public LibXR::Application {
    * @param cmd_data_tp_name CMD数据主题名称
    */
   DR16(LibXR::HardwareContainer& hw, LibXR::ApplicationManager& app, CMD& cmd,
-       uint32_t task_stack_depth_uart)
+       uint32_t task_stack_depth_uart,
+       LibXR::Thread::Priority thread_priority_uart =
+           LibXR::Thread::Priority::HIGH)
       : cmd_(&cmd),
         uart_(hw.Find<LibXR::UART>("uart_dr16")),
         sem_(0),
@@ -150,7 +153,7 @@ class DR16 : public LibXR::Application {
     uart_->SetConfig({100000, LibXR::UART::Parity::EVEN, 8, 1});
     /* 创建UART线程 */
     thread_uart_.Create(this, ThreadDr16, "uart_dr16", task_stack_depth_uart,
-                        LibXR::Thread::Priority::MEDIUM);
+                        thread_priority_uart);
     app.Register(*this);
     int a = 0;
     UNUSED(a);
@@ -178,22 +181,20 @@ class DR16 : public LibXR::Application {
     uint8_t rx_buffer[RX_BUFFER_SIZE] = {0};
     CMD::Data rc_data;
 
-    auto next_read = LibXR::RawData{rx_buffer, RX_BUFFER_SIZE};
-
     while (1) {
-      if (dr16->uart_->Read(next_read, dr16->op_) == ErrorCode::OK) {
+      if (dr16->uart_->Read({rx_buffer, RX_BUFFER_SIZE}, dr16->op_) ==
+          ErrorCode::OK) {
         if (dr16->ParseRC(rx_buffer, rc_data) == ErrorCode::OK) {
           dr16->last_time_ = LibXR::Timebase::GetMilliseconds();
           dr16->cmd_->FeedRC(rc_data);
-          next_read = LibXR::RawData{rx_buffer, RX_BUFFER_SIZE};
         } else {
-          memmove(rx_buffer, rx_buffer + 1, RX_BUFFER_SIZE - 1);
-          next_read = LibXR::RawData{&rx_buffer[RX_BUFFER_SIZE - 1], 1};
+          dr16->uart_->read_port_->Reset();
+          memset(rx_buffer, 0, RX_BUFFER_SIZE);
         }
       }
       dr16->CheckoutOffline();
+      LibXR::Thread::Sleep(2);
     }
-    dr16->thread_uart_.Sleep(5);
   }
 
   /**
