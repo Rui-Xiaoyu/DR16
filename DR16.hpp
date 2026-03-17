@@ -17,6 +17,9 @@ required_hardware: dr16 dma uart
 
 #include "CMD.hpp"
 #include "app_framework.hpp"
+#include "stm32_timebase.hpp"
+#include "thread.hpp"
+#include "timebase.hpp"
 #include "uart.hpp"
 
 /**
@@ -141,7 +144,7 @@ class DR16 : public LibXR::Application {
       : cmd_(&cmd),
         uart_(hw.Find<LibXR::UART>("uart_dr16")),
         sem_(0),
-        op_(sem_, 20) {
+        op_(sem_, 4) {
     uart_->SetConfig({100000, LibXR::UART::Parity::EVEN, 8, 1});
     /* 创建UART线程 */
     thread_uart_.Create(this, ThreadDr16, "uart_dr16", task_stack_depth_uart,
@@ -173,6 +176,7 @@ class DR16 : public LibXR::Application {
     uint8_t rx_buffer[RX_BUFFER_SIZE] = {0};
     CMD::Data rc_data;
 
+    auto last_time = LibXR::Timebase::GetMilliseconds();
     while (1) {
       if (dr16->uart_->Read({rx_buffer, RX_BUFFER_SIZE}, dr16->op_) ==
           ErrorCode::OK) {
@@ -185,7 +189,7 @@ class DR16 : public LibXR::Application {
         }
       }
       dr16->CheckoutOffline();
-      LibXR::Thread::Sleep(2);
+      LibXR::Thread::SleepUntil(last_time, 2);
     }
   }
 
@@ -276,7 +280,7 @@ class DR16 : public LibXR::Application {
     constexpr float FULL_RANGE =
         static_cast<float>(DR16_CH_VALUE_MAX - DR16_CH_VALUE_MIN);
     constexpr float INV_FULL_RANGE = 1.0f / FULL_RANGE;
-    constexpr float MOUSE_SCALER = 1000.0f / 32768.0f;
+    constexpr float MOUSE_SCALER = 40.0f / 32768.0f;
 
     auto clamp_unit = [](float value) {
       constexpr float UPPER_LIMIT = 1.0f;
@@ -323,16 +327,16 @@ class DR16 : public LibXR::Application {
         INV_FULL_RANGE;
 
     if (curr_rc.key & RawValue(Key::KEY_A)) {
-      output_data.chassis.x -= 0.5f;
+      output_data.chassis.x -= 1.0f;
     }
     if (curr_rc.key & RawValue(Key::KEY_D)) {
-      output_data.chassis.x += 0.5f;
+      output_data.chassis.x += 1.0f;
     }
     if (curr_rc.key & RawValue(Key::KEY_S)) {
-      output_data.chassis.y -= 0.5f;
+      output_data.chassis.y -= 1.0f;
     }
     if (curr_rc.key & RawValue(Key::KEY_W)) {
-      output_data.chassis.y += 0.5f;
+      output_data.chassis.y += 1.0f;
     }
 
     output_data.gimbal.pit += static_cast<float>(curr_rc.y) * MOUSE_SCALER;
