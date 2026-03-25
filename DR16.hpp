@@ -17,6 +17,7 @@ required_hardware: dr16 dma uart
 
 #include "CMD.hpp"
 #include "app_framework.hpp"
+#include "libxr_mem.hpp"
 #include "stm32_timebase.hpp"
 #include "thread.hpp"
 #include "timebase.hpp"
@@ -150,8 +151,6 @@ class DR16 : public LibXR::Application {
     thread_uart_.Create(this, ThreadDr16, "uart_dr16", task_stack_depth_uart,
                         thread_priority_uart);
     app.Register(*this);
-    int a = 0;
-    UNUSED(a);
   }
 
   /**
@@ -185,7 +184,7 @@ class DR16 : public LibXR::Application {
           dr16->cmd_->FeedRC(rc_data);
         } else {
           dr16->uart_->read_port_->Reset();
-          memset(rx_buffer, 0, RX_BUFFER_SIZE);
+          LibXR::Memory::FastSet(rx_buffer, 0, RX_BUFFER_SIZE);
         }
       }
       dr16->CheckoutOffline();
