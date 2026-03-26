@@ -18,7 +18,6 @@ required_hardware: dr16 dma uart
 #include "CMD.hpp"
 #include "app_framework.hpp"
 #include "libxr_mem.hpp"
-#include "stm32_timebase.hpp"
 #include "thread.hpp"
 #include "timebase.hpp"
 #include "uart.hpp"
