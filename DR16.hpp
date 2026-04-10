@@ -15,6 +15,7 @@ required_hardware: dr16 dma uart
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+
 #include "CMD.hpp"
 #include "app_framework.hpp"
 #include "thread.hpp"
@@ -279,8 +280,6 @@ class DR16 : public LibXR::Application {
     constexpr float INV_FULL_RANGE = 1.0f / FULL_RANGE;
     constexpr float MOUSE_SCALER = 20.0f / 32768.0f;
 
-
-
     if (curr_rc.press_l && !this->last_data_.press_l) {
       this->dr16_event_.Active(static_cast<uint32_t>(Key::KEY_L_PRESS));
     }
@@ -326,23 +325,22 @@ class DR16 : public LibXR::Application {
 
     output_data.chassis.self_define = CMD::ChasStat::NONE;
 
-    if (curr_rc.key & RawValue(Key::KEY_SHIFT) or curr_rc.res == DR16_CH_VALUE_MAX) {
-        output_data.chassis.self_define = CMD::ChasStat::BOOST;
-      }
-
-    if (curr_rc.key & RawValue(Key::KEY_C) or curr_rc.res == DR16_CH_VALUE_MIN) {
-        output_data.chassis.self_define = CMD::ChasStat::STRETCH;
-      }
-      return value;
-    };
-
-
     output_data.gimbal.pit += static_cast<float>(curr_rc.y) * MOUSE_SCALER;
     output_data.gimbal.yaw += -static_cast<float>(curr_rc.x) * MOUSE_SCALER;
 
-    output_data.chassis.x = std::clamp(output_data.chassis.x,-1.0f,1.0f);
-    output_data.chassis.y = std::clamp(output_data.chassis.y,-1.0f,1.0f);
-    output_data.chassis.z = std::clamp(output_data.chassis.z,-1.0f,1.0f);
+    if (curr_rc.key & RawValue(Key::KEY_SHIFT) or
+        curr_rc.res == DR16_CH_VALUE_MAX) {
+      output_data.chassis.self_define = CMD::ChasStat::BOOST;
+    }
+
+    if (curr_rc.key & RawValue(Key::KEY_C) or
+        curr_rc.res == DR16_CH_VALUE_MIN) {
+      output_data.chassis.self_define = CMD::ChasStat::STRETCH;
+    }
+
+    output_data.chassis.x = std::clamp(output_data.chassis.x, -1.0f, 1.0f);
+    output_data.chassis.y = std::clamp(output_data.chassis.y, -1.0f, 1.0f);
+    output_data.chassis.z = std::clamp(output_data.chassis.z, -1.0f, 1.0f);
 
     output_data.launcher.isfire =
         (curr_rc.res == DR16_CH_VALUE_MIN) or (curr_rc.press_l == 1);
