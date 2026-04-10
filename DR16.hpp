@@ -12,11 +12,14 @@ required_hardware: dr16 dma uart
 === END MANIFEST === */
 // clang-format on
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 
 #include "CMD.hpp"
 #include "app_framework.hpp"
+#include "thread.hpp"
+#include "timebase.hpp"
 #include "uart.hpp"
 
 /**
@@ -33,14 +36,6 @@ required_hardware: dr16 dma uart
  */
 class DR16 : public LibXR::Application {
  public:
-  /**
-   * @brief 控制源枚举
-   */
-  enum class ControlSource : uint8_t {
-    DR16_CTRL_SOURCE_SW = 0x00,
-    DR16_CTRL_SOURCE_MOUSE = 0x01,
-  };
-
   /**
    * @brief 拨杆开关位置枚举
    */
@@ -145,18 +140,16 @@ class DR16 : public LibXR::Application {
   DR16(LibXR::HardwareContainer& hw, LibXR::ApplicationManager& app, CMD& cmd,
        uint32_t task_stack_depth_uart,
        LibXR::Thread::Priority thread_priority_uart =
-           LibXR::Thread::Priority::HIGH)
+           LibXR::Thread::Priority::MEDIUM)
       : cmd_(&cmd),
         uart_(hw.Find<LibXR::UART>("uart_dr16")),
         sem_(0),
-        op_(sem_, 20) {
+        op_(sem_, 4) {
     uart_->SetConfig({100000, LibXR::UART::Parity::EVEN, 8, 1});
     /* 创建UART线程 */
     thread_uart_.Create(this, ThreadDr16, "uart_dr16", task_stack_depth_uart,
                         thread_priority_uart);
     app.Register(*this);
-    int a = 0;
-    UNUSED(a);
   }
 
   /**
@@ -181,6 +174,7 @@ class DR16 : public LibXR::Application {
     uint8_t rx_buffer[RX_BUFFER_SIZE] = {0};
     CMD::Data rc_data;
 
+    auto last_time = LibXR::Timebase::GetMilliseconds();
     while (1) {
       if (dr16->uart_->Read({rx_buffer, RX_BUFFER_SIZE}, dr16->op_) ==
           ErrorCode::OK) {
@@ -189,11 +183,11 @@ class DR16 : public LibXR::Application {
           dr16->cmd_->FeedRC(rc_data);
         } else {
           dr16->uart_->read_port_->Reset();
-          memset(rx_buffer, 0, RX_BUFFER_SIZE);
+          LibXR::Memory::FastSet(rx_buffer, 0, RX_BUFFER_SIZE);
         }
       }
       dr16->CheckoutOffline();
-      LibXR::Thread::Sleep(2);
+      LibXR::Thread::SleepUntil(last_time, 5);
     }
   }
 
@@ -265,104 +259,91 @@ class DR16 : public LibXR::Application {
           1);
     }
 
-    uint32_t tmp = 0;
+    uint32_t modifier_offset = 0;
 
     if (curr_rc.key & RawValue(Key::KEY_SHIFT)) {
-      tmp += static_cast<uint32_t>(Key::KEY_NUM);
+      modifier_offset += static_cast<uint32_t>(Key::KEY_NUM);
     }
     if (curr_rc.key & RawValue(Key::KEY_CTRL)) {
-      tmp += 2 * static_cast<uint32_t>(Key::KEY_NUM);
+      modifier_offset += 2 * static_cast<uint32_t>(Key::KEY_NUM);
     }
 
     for (int i = 0; i < 16; i++) {
       if ((curr_rc.key & (1 << i)) && !(this->last_data_.key & (1 << i))) {
-        this->dr16_event_.Active(static_cast<uint32_t>(Key::KEY_W) + i + tmp);
+        this->dr16_event_.Active(static_cast<uint32_t>(Key::KEY_W) + i +
+                                 modifier_offset);
       }
-    }
-
-    uint16_t combo_sw = RawValue(Key::KEY_SHIFT) | RawValue(Key::KEY_CTRL) |
-                        RawValue(Key::KEY_Q);
-    uint16_t combo_mouse = RawValue(Key::KEY_SHIFT) | RawValue(Key::KEY_CTRL) |
-                           RawValue(Key::KEY_E);
-
-    if ((curr_rc.key & combo_sw) == combo_sw) {
-      this->ctrl_source_ = ControlSource::DR16_CTRL_SOURCE_SW;
-    }
-
-    if ((curr_rc.key & combo_mouse) == combo_mouse) {
-      this->ctrl_source_ = ControlSource::DR16_CTRL_SOURCE_MOUSE;
     }
 
     constexpr float FULL_RANGE =
         static_cast<float>(DR16_CH_VALUE_MAX - DR16_CH_VALUE_MIN);
     constexpr float INV_FULL_RANGE = 1.0f / FULL_RANGE;
-    constexpr float MOUSE_SCALER = 1000.0f / 32768.0f;
+    constexpr float MOUSE_SCALER = 20.0f / 32768.0f;
 
-    if (this->ctrl_source_ == ControlSource::DR16_CTRL_SOURCE_MOUSE) {
-      if (curr_rc.press_r && !this->last_data_.press_r) {
-        this->dr16_event_.Active(static_cast<uint32_t>(Key::KEY_R_PRESS));
-      }
-      if (!curr_rc.press_r && this->last_data_.press_r) {
-        this->dr16_event_.Active(static_cast<uint32_t>(Key::KEY_R_RELEASE));
-      }
-
-      if (curr_rc.key & RawValue(Key::KEY_A)) {
-        output_data.chassis.x -= 0.5f;
-      }
-      if (curr_rc.key & RawValue(Key::KEY_D)) {
-        output_data.chassis.x += 0.5f;
-      }
-      if (curr_rc.key & RawValue(Key::KEY_S)) {
-        output_data.chassis.y -= 0.5f;
-      }
-      if (curr_rc.key & RawValue(Key::KEY_W)) {
-        output_data.chassis.y += 0.5f;
-      }
-
-      if (curr_rc.key & RawValue(Key::KEY_SHIFT)) {
-        output_data.chassis.boost = true;
-      } else {
-        output_data.chassis.boost = false;
-      }
-
-      output_data.chassis.z = 0.0f;
-
-      output_data.gimbal.pit = static_cast<float>(curr_rc.y) * MOUSE_SCALER;
-      output_data.gimbal.yaw = -static_cast<float>(curr_rc.x) * MOUSE_SCALER;
-
-      if (curr_rc.press_l && !this->last_data_.press_l) {
-        output_data.launcher.isfire = true;
-      }
-      if (!curr_rc.press_l && this->last_data_.press_l) {
-        output_data.launcher.isfire = false;
-      }
+    if (curr_rc.press_l && !this->last_data_.press_l) {
+      this->dr16_event_.Active(static_cast<uint32_t>(Key::KEY_L_PRESS));
+    }
+    if (!curr_rc.press_l && this->last_data_.press_l) {
+      this->dr16_event_.Active(static_cast<uint32_t>(Key::KEY_L_RELEASE));
+    }
+    if (curr_rc.press_r && !this->last_data_.press_r) {
+      this->dr16_event_.Active(static_cast<uint32_t>(Key::KEY_R_PRESS));
+    }
+    if (!curr_rc.press_r && this->last_data_.press_r) {
+      this->dr16_event_.Active(static_cast<uint32_t>(Key::KEY_R_RELEASE));
     }
 
-    else if (this->ctrl_source_ == ControlSource::DR16_CTRL_SOURCE_SW) {
-      output_data.chassis.x =
-          2 * (static_cast<float>(curr_rc.ch_l_x) - DR16_CH_VALUE_MID) *
-          INV_FULL_RANGE;
-      output_data.chassis.y =
-          2 * (static_cast<float>(curr_rc.ch_l_y) - DR16_CH_VALUE_MID) *
-          INV_FULL_RANGE;
-      output_data.chassis.z =
-          -2 * (static_cast<float>(curr_rc.ch_r_x) - DR16_CH_VALUE_MID) *
-          INV_FULL_RANGE;
-      output_data.chassis.boost = false; /* 遥控器模式默认不开启功率加成 */
+    output_data.chassis.x =
+        2 * (static_cast<float>(curr_rc.ch_l_x) - DR16_CH_VALUE_MID) *
+        INV_FULL_RANGE;
+    output_data.chassis.y =
+        2 * (static_cast<float>(curr_rc.ch_l_y) - DR16_CH_VALUE_MID) *
+        INV_FULL_RANGE;
+    output_data.chassis.z =
+        -2 * (static_cast<float>(curr_rc.ch_r_x) - DR16_CH_VALUE_MID) *
+        INV_FULL_RANGE;
 
-      output_data.gimbal.yaw =
-          -2 * (static_cast<float>(curr_rc.ch_r_x) - DR16_CH_VALUE_MID) *
-          INV_FULL_RANGE;
-      output_data.gimbal.pit =
-          2 * (static_cast<float>(curr_rc.ch_r_y) - DR16_CH_VALUE_MID) *
-          INV_FULL_RANGE;
+    output_data.gimbal.yaw =
+        -2 * (static_cast<float>(curr_rc.ch_r_x) - DR16_CH_VALUE_MID) *
+        INV_FULL_RANGE;
+    output_data.gimbal.pit =
+        2 * (static_cast<float>(curr_rc.ch_r_y) - DR16_CH_VALUE_MID) *
+        INV_FULL_RANGE;
 
-      if (curr_rc.res == DR16_CH_VALUE_MIN) {
-        output_data.launcher.isfire = true;
-      } else {
-        output_data.launcher.isfire = false;
-      }
+    if (curr_rc.key & RawValue(Key::KEY_A)) {
+      output_data.chassis.x -= 1.0f;
     }
+    if (curr_rc.key & RawValue(Key::KEY_D)) {
+      output_data.chassis.x += 1.0f;
+    }
+    if (curr_rc.key & RawValue(Key::KEY_S)) {
+      output_data.chassis.y -= 1.0f;
+    }
+    if (curr_rc.key & RawValue(Key::KEY_W)) {
+      output_data.chassis.y += 1.0f;
+    }
+
+    output_data.chassis.self_define = CMD::ChasStat::NONE;
+
+    output_data.gimbal.pit += static_cast<float>(curr_rc.y) * MOUSE_SCALER;
+    output_data.gimbal.yaw += -static_cast<float>(curr_rc.x) * MOUSE_SCALER;
+
+    if (curr_rc.key & RawValue(Key::KEY_SHIFT) or
+        curr_rc.res == DR16_CH_VALUE_MAX) {
+      output_data.chassis.self_define = CMD::ChasStat::BOOST;
+    }
+
+    if (curr_rc.key & RawValue(Key::KEY_C) or
+        curr_rc.res == DR16_CH_VALUE_MIN) {
+      output_data.chassis.self_define = CMD::ChasStat::STRETCH;
+    }
+
+    output_data.chassis.x = std::clamp(output_data.chassis.x, -1.0f, 1.0f);
+    output_data.chassis.y = std::clamp(output_data.chassis.y, -1.0f, 1.0f);
+    output_data.chassis.z = std::clamp(output_data.chassis.z, -1.0f, 1.0f);
+
+    output_data.launcher.isfire =
+        (curr_rc.res == DR16_CH_VALUE_MIN) or (curr_rc.press_l == 1);
 
     output_data.chassis_online = true;
     output_data.gimbal_online = true;
@@ -433,8 +414,6 @@ class DR16 : public LibXR::Application {
 
  private:
   CMD* cmd_; /* CMD模块指针 */
-  ControlSource ctrl_source_ =
-      ControlSource::DR16_CTRL_SOURCE_SW; /* 当前控制源 */
 
   Data last_data_{};     /* 上一帧数据 */
   CMD::Data cmd_data_{}; /* 命令数据 */
