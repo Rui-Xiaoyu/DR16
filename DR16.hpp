@@ -12,12 +12,11 @@ required_hardware: dr16 dma uart
 === END MANIFEST === */
 // clang-format on
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
-
 #include "CMD.hpp"
 #include "app_framework.hpp"
-#include "libxr_mem.hpp"
 #include "thread.hpp"
 #include "timebase.hpp"
 #include "uart.hpp"
@@ -140,7 +139,7 @@ class DR16 : public LibXR::Application {
   DR16(LibXR::HardwareContainer& hw, LibXR::ApplicationManager& app, CMD& cmd,
        uint32_t task_stack_depth_uart,
        LibXR::Thread::Priority thread_priority_uart =
-           LibXR::Thread::Priority::HIGH)
+           LibXR::Thread::Priority::MEDIUM)
       : cmd_(&cmd),
         uart_(hw.Find<LibXR::UART>("uart_dr16")),
         sem_(0),
@@ -187,7 +186,7 @@ class DR16 : public LibXR::Application {
         }
       }
       dr16->CheckoutOffline();
-      LibXR::Thread::SleepUntil(last_time, 2);
+      LibXR::Thread::SleepUntil(last_time, 5);
     }
   }
 
@@ -278,20 +277,9 @@ class DR16 : public LibXR::Application {
     constexpr float FULL_RANGE =
         static_cast<float>(DR16_CH_VALUE_MAX - DR16_CH_VALUE_MIN);
     constexpr float INV_FULL_RANGE = 1.0f / FULL_RANGE;
-    constexpr float MOUSE_SCALER = 40.0f / 32768.0f;
+    constexpr float MOUSE_SCALER = 20.0f / 32768.0f;
 
-    auto clamp_unit = [](float value) {
-      constexpr float UPPER_LIMIT = 1.0f;
-      constexpr float LOWER_LIMIT = -1.0f;
 
-      if (value > UPPER_LIMIT) {
-        return UPPER_LIMIT;
-      }
-      if (value < LOWER_LIMIT) {
-        return LOWER_LIMIT;
-      }
-      return value;
-    };
 
     if (curr_rc.press_l && !this->last_data_.press_l) {
       this->dr16_event_.Active(static_cast<uint32_t>(Key::KEY_L_PRESS));
@@ -315,7 +303,6 @@ class DR16 : public LibXR::Application {
     output_data.chassis.z =
         -2 * (static_cast<float>(curr_rc.ch_r_x) - DR16_CH_VALUE_MID) *
         INV_FULL_RANGE;
-    output_data.chassis.boost = (curr_rc.key & RawValue(Key::KEY_SHIFT)) != 0U;
 
     output_data.gimbal.yaw =
         -2 * (static_cast<float>(curr_rc.ch_r_x) - DR16_CH_VALUE_MID) *
@@ -337,14 +324,28 @@ class DR16 : public LibXR::Application {
       output_data.chassis.y += 1.0f;
     }
 
+    output_data.chassis.self_define = CMD::ChasStat::NONE;
+
+    if (curr_rc.key & RawValue(Key::KEY_SHIFT) or curr_rc.res == DR16_CH_VALUE_MAX) {
+        output_data.chassis.self_define = CMD::ChasStat::BOOST;
+      }
+
+    if (curr_rc.key & RawValue(Key::KEY_C) or curr_rc.res == DR16_CH_VALUE_MIN) {
+        output_data.chassis.self_define = CMD::ChasStat::STRETCH;
+      }
+      return value;
+    };
+
+
     output_data.gimbal.pit += static_cast<float>(curr_rc.y) * MOUSE_SCALER;
     output_data.gimbal.yaw += -static_cast<float>(curr_rc.x) * MOUSE_SCALER;
 
-    output_data.chassis.x = clamp_unit(output_data.chassis.x);
-    output_data.chassis.y = clamp_unit(output_data.chassis.y);
-    output_data.chassis.z = clamp_unit(output_data.chassis.z);
+    output_data.chassis.x = std::clamp(output_data.chassis.x,-1.0f,1.0f);
+    output_data.chassis.y = std::clamp(output_data.chassis.y,-1.0f,1.0f);
+    output_data.chassis.z = std::clamp(output_data.chassis.z,-1.0f,1.0f);
+
     output_data.launcher.isfire =
-        (curr_rc.res == DR16_CH_VALUE_MIN) || (curr_rc.press_l != 0U);
+        (curr_rc.res == DR16_CH_VALUE_MIN) or (curr_rc.press_l == 1);
 
     output_data.chassis_online = true;
     output_data.gimbal_online = true;
