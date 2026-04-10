@@ -333,6 +333,8 @@ class DR16 : public LibXR::Application {
     if (curr_rc.key & RawValue(Key::KEY_C) or curr_rc.res == DR16_CH_VALUE_MIN) {
         output_data.chassis.self_define = CMD::ChasStat::STRETCH;
       }
+      return value;
+    };
 
 
     output_data.gimbal.pit += static_cast<float>(curr_rc.y) * MOUSE_SCALER;
