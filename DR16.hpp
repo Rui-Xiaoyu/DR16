@@ -180,7 +180,7 @@ class DR16 : public LibXR::Application {
           ErrorCode::OK) {
         if (dr16->ParseRC(rx_buffer, rc_data) == ErrorCode::OK) {
           dr16->last_time_ = LibXR::Timebase::GetMilliseconds();
-          dr16->cmd_->FeedRC(rc_data);
+          dr16->cmd_->FeedRC(CMD::RCInputSource::RC_INPUT_DR16, rc_data);
         } else {
           dr16->uart_->read_port_->Reset();
           LibXR::Memory::FastSet(rx_buffer, 0, RX_BUFFER_SIZE);
@@ -358,6 +358,7 @@ class DR16 : public LibXR::Application {
     cmd_data_.chassis.x = 0;
     cmd_data_.chassis.y = 0;
     cmd_data_.chassis.z = 0;
+    cmd_data_.chassis.self_define = CMD::ChasStat::NONE;
 
     cmd_data_.gimbal.yaw = 0;
     cmd_data_.gimbal.pit = 0;
@@ -367,7 +368,7 @@ class DR16 : public LibXR::Application {
     cmd_data_.chassis_online = false;
     cmd_data_.gimbal_online = false;
 
-    cmd_->FeedRC(cmd_data_);
+    cmd_->FeedRC(CMD::RCInputSource::RC_INPUT_DR16, cmd_data_);
   }
 
 #ifdef LIBXR_DEBUG_BUILD
