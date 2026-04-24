@@ -177,8 +177,8 @@ class DR16 : public LibXR::Application {
     auto last_time = LibXR::Timebase::GetMilliseconds();
     while (1) {
       if (dr16->uart_->Read({rx_buffer, RX_BUFFER_SIZE}, dr16->op_) ==
-          ErrorCode::OK) {
-        if (dr16->ParseRC(rx_buffer, rc_data) == ErrorCode::OK) {
+          LibXR::ErrorCode::OK) {
+        if (dr16->ParseRC(rx_buffer, rc_data) == LibXR::ErrorCode::OK) {
           dr16->last_time_ = LibXR::Timebase::GetMilliseconds();
           dr16->cmd_->FeedRC(CMD::RCInputSource::RC_INPUT_DR16, rc_data);
         } else {
@@ -200,9 +200,9 @@ class DR16 : public LibXR::Application {
    * @param output_data 解析后的 CMD 数据 (用于提交给云台)
    * @return true 解析成功, false 数据无效
    */
-  ErrorCode ParseRC(const uint8_t* raw_data, CMD::Data& output_data) {
+  LibXR::ErrorCode ParseRC(const uint8_t* raw_data, CMD::Data& output_data) {
     if (!raw_data) {
-      return ErrorCode::PTR_NULL;
+      return LibXR::ErrorCode::PTR_NULL;
     };
 
     Data curr_rc{};
@@ -239,11 +239,11 @@ class DR16 : public LibXR::Application {
         curr_rc.ch_r_x > DR16_CH_VALUE_MAX ||
         curr_rc.ch_r_y < DR16_CH_VALUE_MIN ||
         curr_rc.ch_r_y > DR16_CH_VALUE_MAX) {
-      return ErrorCode::CHECK_ERR;
+      return LibXR::ErrorCode::CHECK_ERR;
     }
 
     if (curr_rc.sw_l == 0 || curr_rc.sw_r == 0) {
-      return ErrorCode::CHECK_ERR;
+      return LibXR::ErrorCode::CHECK_ERR;
     }
 
     output_data = CMD::Data();
@@ -351,7 +351,7 @@ class DR16 : public LibXR::Application {
 
     this->last_data_ = curr_rc;
 
-    return ErrorCode::OK;
+    return LibXR::ErrorCode::OK;
   }
 
   void Offline() {
